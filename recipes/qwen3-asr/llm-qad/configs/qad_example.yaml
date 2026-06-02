@@ -1,0 +1,161 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 VinRobotics
+# SPDX-License-Identifier: BSD-3-Clause
+# ─────────────────────────────────────────────────────────────────────────────
+# qad_example.yaml — Config template for Quantization-Aware Distillation (QAD)
+#
+# Copy this file and fill in your own paths.
+# All ~ paths are expanded automatically.
+# ─────────────────────────────────────────────────────────────────────────────
+
+paths:
+  # ── Model checkpoints ──────────────────────────────────────────────────────
+  # Full-precision teacher (any size/variant, e.g. 1.7B, 7B, etc.)
+  teacher_ckpt:  ~/models/Qwen3-ASR-1.7B
+
+  # INT4 quantized student produced by NVIDIA modelopt
+  student_ckpt:  ~/models/Qwen3-ASR-1.7B-int4
+
+  # ── Data ───────────────────────────────────────────────────────────────────
+  # Root directory scanned recursively for *.wav files
+  data_dir:      ~/data/asr_train
+
+  # JSONL file written by 'prepare' stage, read by 'train' stage
+  # Format per line: {"path": "/abs/path.wav", "pseudo_text": "transcript"}
+  pseudo_labels: ~/experiments/qad_run1/pseudo_labels.jsonl
+
+  # ── Output ─────────────────────────────────────────────────────────────────
+  output_dir:    ~/experiments/qad_run1/checkpoints
+
+  # ── Eval datasets ──────────────────────────────────────────────────────────
+  # Layout expected:
+  #   eval_vivos/
+  #     prompts.txt   → lines: "UTT_ID transcript text here"
+  #     waves/
+  #       UTT_ID.wav  (flat or nested)
+  eval_vivos:    ~/eval_data/vivos
+  eval_libri:    ~/eval_data/librispeech
+
+  # ── Custom model source (optional) ─────────────────────────────────────────
+  # Set to null to use standard HuggingFace transformers classes.
+  # If set, this directory is prepended to sys.path before importing model classes.
+  custom_src:    ~/code/Qwen3-ASR
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Model class configuration
+# Change these to use a different model family.
+# ─────────────────────────────────────────────────────────────────────────────
+model:
+  # Class to use for teacher and student (must be HuggingFace compatible)
+  model_class:      "Qwen3ASRForConditionalGeneration"
+  # Python module path to import model_class from
+  model_module:     "qwen_asr.core.transformers_backend.modeling_qwen3_asr"
+
+  # Processor class (tokenizer + feature extractor)
+  processor_class:  "Qwen3ASRProcessor"
+  processor_module: "qwen_asr.core.transformers_backend.processing_qwen3_asr"
+
+  # High-level eval model — must expose:
+  #   model.transcribe(audio=(np_array, sample_rate), language=None) -> [Result]
+  # where Result.text is the transcript string.
+  eval_model_class:  "Qwen3ASRModel"
+  eval_model_module: "qwen_asr"
+
+  # Quantization backend used to save the student checkpoint.
+  # "modelopt" : enable NVIDIA modelopt HF checkpointing before loading
+  #              (supports INT4 / INT8 / FP8 via modelopt)
+  # null       : standard HuggingFace from_pretrained()
+  #              (use for bitsandbytes, GPTQ, AWQ, HQQ, or unquantized)
+  quantization_backend: "modelopt"
+
+  # Extra kwargs forwarded to ProcessorClass.from_pretrained(...)
+  # Example for Qwen3-ASR: fix_mistral_regex=True
+  processor_kwargs:
+    fix_mistral_regex: true
+
+  # Name of the inner sub-module wrapping the language model decoder.
+  # Set to null if the top-level model IS the language model (no wrapper).
+  # Qwen3-ASR uses "thinker"; standard HF models would use null.
+  inner_module: "thinker"
+
+  # ── Token / prompt overrides ────────────────────────────────────────────────
+  # Leave null to auto-detect from model.config / processor attributes.
+  # Override if your model uses non-standard token names.
+
+  # Token ID marking the end of the audio region (start of text response)
+  audio_end_token_id: null   # e.g. 151669
+
+  # Full audio placeholder string prepended to pseudo_text during training.
+  # null = auto-built from processor.audio_bos_token + audio_token + audio_eos_token
+  audio_prompt_override: null  # e.g. "<|audio_bos|><|AUDIO|><|audio_eos|>"
+
+  # Untie lm_head weights from embed_tokens.
+  # Commonly required for PTQ-quantized models (any scheme) where tied weights
+  # conflict with per-layer quantization while keeping lm_head frozen.
+  fix_tie_embeddings: true
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Audio / data filtering
+# ─────────────────────────────────────────────────────────────────────────────
+data:
+  min_duration_s: 0.5    # skip files shorter than this (seconds)
+  max_duration_s: 30.0   # skip files longer than this (seconds)
+  sample_rate:    16000  # target sample rate; files are resampled if needed
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Inference / generation settings (used in prepare stage and eval)
+# ─────────────────────────────────────────────────────────────────────────────
+generation:
+  max_new_tokens: 256
+  num_beams:      1     # 1 = greedy decoding (deterministic + fast)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Training hyperparameters
+# ─────────────────────────────────────────────────────────────────────────────
+training:
+  # Learning rate schedule: cosine decay with warmup
+  lr:           2.0e-6
+  min_lr:       5.0e-7
+  warmup_steps: 400
+
+  max_steps:    20000
+
+  # Per-GPU batch size × gradient_accumulation_steps × num_GPUs = effective global batch
+  # Example (1 GPU, RTX 5090): 4 × 4 × 1 = 16
+  per_gpu_batch_size:          4
+  gradient_accumulation_steps: 4
+
+  weight_decay: 0.0
+  grad_clip:    1.0
+
+  # Knowledge Distillation settings
+  # kd_temperature: higher = softer teacher distribution = more KD signal
+  kd_temperature: 2.0
+  # alpha_kd: 1.0 = pure KD (no CE), 0.0 = pure CE, 0.5 = equal mix
+  alpha_kd:       0.5
+
+  bf16:         true    # use bfloat16; false = float16
+
+  save_interval: 500    # save checkpoint every N optimizer steps
+  log_interval:  10     # log to stdout + tensorboard every N optimizer steps
+
+  seed:         42
+  num_workers:  4       # DataLoader worker processes
+
+  adam_betas:   [0.9, 0.95]
+  adam_eps:     1.0e-8
+
+  # Parameter name substrings to freeze (will not receive gradients)
+  frozen_keywords: ["audio_tower", "lm_head"]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# WER Evaluation
+# ─────────────────────────────────────────────────────────────────────────────
+eval:
+  max_samples_vivos: 760   # 0 = use all samples
+  max_samples_libri: 500   # 0 = use all samples
+  dtype: "float16"         # eval model dtype: "float16" or "bfloat16"

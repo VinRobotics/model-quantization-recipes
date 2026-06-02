@@ -1,0 +1,11 @@
+# Install PyTorch BEFORE running: pip install -r requirements.txt
+# Pick the line matching your CUDA version:
+#
+# CUDA 12.1:
+#   pip install torch==2.5.1+cu121 torchvision==0.20.1+cu121 --extra-index-url https://download.pytorch.org/whl/cu121
+#
+# CUDA 12.4 / 12.x / 13.x:
+#   pip install torch==2.5.1+cu124 torchvision==0.20.1+cu124 --extra-index-url https://download.pytorch.org/whl/cu124
+#
+# CPU only:
+#   pip install torch==2.5.1 torchvision==0.20.1

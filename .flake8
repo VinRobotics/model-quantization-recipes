@@ -1,0 +1,16 @@
+[flake8]
+max-line-length = 120
+ignore =
+    # E203 whitespace before ':' (black compatibility)
+    E203,
+    # W503 line break before binary operator (black compatibility)
+    W503,
+    # E241/E221 allow aligned formatting in dicts and assignments
+    E241,
+    E221
+exclude =
+    .git,
+    __pycache__,
+    .venv,
+    build,
+    dist

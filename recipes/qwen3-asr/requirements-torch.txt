@@ -1,0 +1,14 @@
+# Install PyTorch BEFORE running: pip install -r requirements.txt
+# Pick the line matching your CUDA version:
+#
+# CUDA 12.1:
+#   pip install torch==2.5.1+cu121 torchaudio==2.5.1+cu121 --extra-index-url https://download.pytorch.org/whl/cu121
+#
+# CUDA 12.4 / 12.x:
+#   pip install torch==2.5.1+cu124 torchaudio==2.5.1+cu124 --extra-index-url https://download.pytorch.org/whl/cu124
+#
+# CUDA 12.8 (RTX 5090 / Blackwell):
+#   pip install torch==2.10.0+cu128 torchaudio==2.10.0+cu128 --extra-index-url https://download.pytorch.org/whl/cu128
+#
+# CPU only:
+#   pip install torch==2.5.1 torchaudio==2.5.1

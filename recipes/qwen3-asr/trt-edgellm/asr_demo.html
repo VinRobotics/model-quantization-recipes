@@ -1,0 +1,809 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Qwen3-ASR · Demo</title>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#eef2ff;
+  --surface:#ffffff;
+  --card:#f8faff;
+  --border:#dde5f8;
+  --border2:#c5d0f0;
+  --acc:#4f6ef7;
+  --acc-bg:#eef1ff;
+  --grn:#16c784;
+  --grn2:#0ea96e;
+  --grn-bg:#e8fdf4;
+  --grn-bd:rgba(22,199,132,.25);
+  --amb:#f59e0b;
+  --red:#ef4444;
+  --red-bg:#fef2f2;
+  --txt:#1a2035;
+  --txt2:#3d4a6b;
+  --txt3:#7986a8;
+  --txt4:#b3bdd8;
+  --mono:'JetBrains Mono',monospace;
+  --ui:'Plus Jakarta Sans',sans-serif;
+  --r:12px;
+}
+html,body{height:100%;background:var(--bg);color:var(--txt);font-family:var(--ui);overflow:hidden}
+body::before{
+  content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
+  background:
+    radial-gradient(ellipse 700px 500px at 5% 15%,rgba(79,110,247,.1) 0%,transparent 65%),
+    radial-gradient(ellipse 500px 400px at 90% 85%,rgba(22,199,132,.08) 0%,transparent 60%),
+    radial-gradient(ellipse 350px 350px at 65% 5%,rgba(245,158,11,.07) 0%,transparent 55%);
+}
+
+/* HEADER */
+header{
+  position:fixed;top:0;left:0;right:0;z-index:200;
+  height:56px;display:flex;align-items:center;gap:14px;padding:0 24px;
+  background:rgba(255,255,255,.88);backdrop-filter:blur(16px);
+  border-bottom:1px solid var(--border);
+}
+.logo{display:flex;align-items:center;gap:10px}
+.lmark{
+  width:34px;height:34px;border-radius:10px;flex-shrink:0;
+  background:linear-gradient(135deg,#4f6ef7,#7c5cfc);
+  display:flex;align-items:center;justify-content:center;
+  box-shadow:0 4px 12px rgba(79,110,247,.35)
+}
+.lmark svg{width:18px;height:18px;stroke:#fff;fill:none;stroke-width:2.2;stroke-linecap:round}
+.lname{font-size:16px;font-weight:800;color:var(--txt);letter-spacing:-.02em}
+.lname em{color:var(--acc);font-style:normal}
+.spill{
+  margin-left:auto;display:flex;align-items:center;gap:7px;
+  border-radius:30px;padding:5px 14px;font-size:12px;font-weight:600;cursor:default;
+  background:var(--grn-bg);border:1.5px solid var(--grn-bd);color:var(--grn2);transition:all .3s
+}
+.ldot{width:8px;height:8px;border-radius:50%;background:var(--grn);flex-shrink:0;animation:lpulse 2s ease-in-out infinite}
+@keyframes lpulse{0%,100%{box-shadow:0 0 0 0 rgba(22,199,132,.4)}50%{box-shadow:0 0 0 5px rgba(22,199,132,0)}}
+
+/* LAYOUT */
+.wrap{display:flex;justify-content:center;height:calc(100vh - 56px);margin-top:56px;position:relative;z-index:1}
+main{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0;max-width:960px;background:rgba(255,255,255,.4);border-left:1px solid var(--border);border-right:1px solid var(--border);}
+
+/* MODE TAB BAR */
+.modebar{
+  height:48px;padding:0 22px;border-bottom:1px solid var(--border);
+  display:flex;align-items:center;gap:8px;flex-shrink:0;
+  background:rgba(255,255,255,.6);backdrop-filter:blur(8px);
+}
+.modetab{
+  display:flex;align-items:center;gap:7px;padding:6px 14px;
+  border-radius:8px;border:1.5px solid transparent;
+  font-size:13px;font-weight:600;cursor:pointer;transition:all .2s;
+  background:none;color:var(--txt3);font-family:var(--ui);
+}
+.modetab svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;flex-shrink:0}
+.modetab.active{background:var(--acc-bg);color:var(--acc);border-color:rgba(79,110,247,.2)}
+.modetab:hover:not(.active){background:var(--card);color:var(--txt2)}
+
+/* FILE BAR */
+.fbar{
+  height:48px;padding:0 22px;border-bottom:1px solid var(--border);
+  display:flex;align-items:center;gap:10px;flex-shrink:0;
+  background:rgba(255,255,255,.6);backdrop-filter:blur(8px);overflow:hidden
+}
+.fbname{font-family:var(--mono);font-size:13px;color:var(--txt);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0}
+.fbsz{font-size:11.5px;font-family:var(--mono);color:var(--txt3);white-space:nowrap;flex-shrink:0}
+.fbhint{font-size:13px;color:var(--txt3)}
+.fbar audio{height:26px;flex-shrink:0;accent-color:var(--acc);max-width:260px}
+
+/* BODY */
+.body{flex:1;overflow-y:auto;padding:24px 32px}
+.body::-webkit-scrollbar{width:4px}
+.body::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
+
+/* PANELS */
+.panel{display:none}
+.panel.active{display:block}
+
+/* DROP ZONE */
+.dz{
+  background:var(--surface);border:2px dashed var(--border2);
+  border-radius:16px;padding:32px 20px;text-align:center;cursor:pointer;
+  margin-bottom:20px;transition:border-color .25s,background .25s;
+  position:relative;overflow:hidden;user-select:none
+}
+.dz:hover,.dz.drag{border-color:var(--acc);background:rgba(79,110,247,.02)}
+.dzico{
+  width:56px;height:56px;border-radius:16px;
+  background:linear-gradient(135deg,var(--acc-bg),rgba(79,110,247,.06));
+  border:1.5px solid rgba(79,110,247,.2);
+  margin:0 auto 14px;display:flex;align-items:center;justify-content:center;
+  transition:transform .2s;pointer-events:none
+}
+.dz:hover .dzico{transform:translateY(-3px)}
+.dzico svg{width:26px;height:26px;stroke:var(--acc);fill:none;stroke-width:2;stroke-linecap:round}
+.dztitle{font-size:15px;font-weight:700;color:var(--txt);margin-bottom:6px;pointer-events:none}
+.dzsub{font-size:13px;color:var(--txt3);margin-bottom:14px;pointer-events:none}
+.dzfmts{display:flex;justify-content:center;gap:6px;pointer-events:none}
+.fmt{font-size:11.5px;font-family:var(--mono);padding:3px 9px;border-radius:6px;background:var(--card);border:1px solid var(--border2);color:var(--txt3)}
+#fi{display:none}
+
+/* MIC ZONE */
+.mz{
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:16px;padding:32px 20px;text-align:center;
+  margin-bottom:20px;position:relative;overflow:hidden;
+  box-shadow:0 2px 12px rgba(79,110,247,.06);
+}
+.mz-idle .mzring{opacity:.4}
+.mz-listening .mzring{opacity:1}
+.mzring{
+  width:96px;height:96px;border-radius:50%;margin:0 auto 20px;
+  position:relative;display:flex;align-items:center;justify-content:center;
+  transition:opacity .3s;
+}
+.mzring::before,.mzring::after{
+  content:'';position:absolute;border-radius:50%;border:2px solid var(--acc);
+  opacity:0;animation:none;
+}
+.mz-listening .mzring::before{
+  width:100%;height:100%;animation:mring 1.8s ease-out infinite;
+}
+.mz-listening .mzring::after{
+  width:100%;height:100%;animation:mring 1.8s ease-out .6s infinite;
+}
+@keyframes mring{
+  0%{transform:scale(1);opacity:.6}
+  100%{transform:scale(1.9);opacity:0}
+}
+.mzbtn{
+  width:72px;height:72px;border-radius:50%;border:none;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+  transition:all .25s;position:relative;z-index:1;
+  background:linear-gradient(135deg,#4f6ef7,#7c5cfc);
+  box-shadow:0 6px 20px rgba(79,110,247,.4);
+}
+.mzbtn:hover{transform:scale(1.07);box-shadow:0 8px 28px rgba(79,110,247,.5)}
+.mzbtn.rec{
+  background:linear-gradient(135deg,#ef4444,#dc2626);
+  box-shadow:0 6px 20px rgba(239,68,68,.4);
+  animation:recpulse 1.5s ease-in-out infinite;
+}
+.mzbtn.rec:hover{box-shadow:0 8px 28px rgba(239,68,68,.5)}
+@keyframes recpulse{0%,100%{box-shadow:0 6px 20px rgba(239,68,68,.4)}50%{box-shadow:0 6px 28px rgba(239,68,68,.7)}}
+.mzbtn svg{width:28px;height:28px;stroke:#fff;fill:none;stroke-width:2;stroke-linecap:round;transition:all .2s}
+.mzbtn.rec .mic-icon{display:none}
+.mzbtn.rec .stop-icon{display:block!important}
+.stop-icon{display:none}
+.mzlabel{font-size:14px;font-weight:600;color:var(--txt);margin-bottom:6px}
+.mzsub{font-size:12.5px;color:var(--txt3);font-family:var(--mono)}
+
+/* MIC WAVEFORM CANVAS */
+.mwrap{
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--r);overflow:hidden;margin-bottom:20px;display:none;
+  animation:fadein .4s ease
+}
+.mwrap.show{display:block}
+.mwlbl{padding:9px 16px;font-size:11px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--txt3);border-bottom:1px solid var(--border)}
+#mwc{width:100%;height:64px;display:block}
+
+/* VAD STATUS */
+.vadstat{
+  display:inline-flex;align-items:center;gap:6px;
+  font-size:12px;font-family:var(--mono);font-weight:500;
+  padding:4px 12px;border-radius:20px;margin-top:10px;
+  transition:all .3s;
+}
+.vadstat.idle{background:var(--card);color:var(--txt3);border:1px solid var(--border)}
+.vadstat.speech{background:var(--red-bg);color:var(--red);border:1px solid rgba(239,68,68,.2)}
+.vadstat.silence{background:var(--grn-bg);color:var(--grn2);border:1px solid var(--grn-bd)}
+.vadstat.processing{background:var(--acc-bg);color:var(--acc);border:1px solid rgba(79,110,247,.2)}
+.vaddot{width:7px;height:7px;border-radius:50%;background:currentColor;flex-shrink:0}
+.vadstat.speech .vaddot{animation:lpulse 1s ease-in-out infinite}
+.vadstat.processing .vaddot{animation:spin .7s linear infinite;border-radius:0;background:none;border:2px solid var(--acc);border-top-color:transparent;width:9px;height:9px}
+
+/* FILE WAVEFORM */
+.ww{
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--r);overflow:hidden;margin-bottom:20px;display:none;
+  animation:fadein .4s ease
+}
+.ww.show{display:block}
+.wwlbl{padding:9px 16px;font-size:11px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--txt3);border-bottom:1px solid var(--border)}
+#wc{width:100%;height:64px;display:block}
+
+/* ERROR */
+.err{
+  background:var(--red-bg);border:1.5px solid #fecaca;border-radius:var(--r);
+  padding:11px 15px;font-size:13px;color:var(--red);font-family:var(--mono);
+  margin-bottom:14px;display:none;animation:fadein .3s ease
+}
+.err.show{display:block}
+
+/* GRID */
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}
+@media(max-width:820px){.g2{grid-template-columns:1fr}}
+
+/* CARD */
+.card{background:var(--surface);border:1px solid var(--border);border-radius:16px;overflow:hidden;box-shadow:0 2px 12px rgba(79,110,247,.06)}
+.chd{padding:12px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px}
+.cico{width:32px;height:32px;border-radius:10px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.cico.blue{background:var(--acc-bg)}.cico.blue svg{stroke:var(--acc)}
+.cico.green{background:var(--grn-bg)}.cico.green svg{stroke:var(--grn2)}
+.cico svg{width:16px;height:16px;fill:none;stroke-width:2.2;stroke-linecap:round}
+.ctitle{font-size:14px;font-weight:700;color:var(--txt)}
+.cbd{padding:14px 18px}
+
+/* PIPELINE STAGES */
+.stage{display:grid;grid-template-columns:40px 1fr auto;align-items:start;gap:12px;padding:12px 0}
+.stage+.stage{border-top:1px solid var(--border)}
+.snum{width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:13px;font-weight:500;border:2px solid var(--border2);color:var(--txt3);background:var(--card);transition:all .35s;flex-shrink:0;margin-top:2px}
+.stage.active .snum{border-color:var(--acc);color:var(--acc);background:var(--acc-bg);animation:ring 1.5s ease-in-out infinite}
+.stage.done .snum{border-color:var(--grn);color:var(--grn2);background:var(--grn-bg)}
+@keyframes ring{0%,100%{box-shadow:0 0 0 0 rgba(79,110,247,.35)}50%{box-shadow:0 0 0 7px rgba(79,110,247,0)}}
+.sname{font-size:14px;font-weight:600;color:var(--txt);margin-bottom:3px}
+.ssub{font-size:12px;color:var(--txt3);font-family:var(--mono)}
+.sright{display:flex;align-items:center;gap:8px;flex-shrink:0;padding-top:4px}
+.sms{font-family:var(--mono);font-size:13px;font-weight:500;color:var(--txt4)}
+.stage.done .sms{color:var(--grn2)}
+.stage.active .sms{color:var(--acc)}
+.sck{width:24px;height:24px;border-radius:50%;background:var(--grn-bg);border:1.5px solid rgba(22,199,132,.3);display:none;align-items:center;justify-content:center;flex-shrink:0}
+.sck svg{width:12px;height:12px;stroke:var(--grn2);fill:none;stroke-width:2.5;stroke-linecap:round}
+.stage.done .sck{display:flex}
+.ssp{width:22px;height:22px;border-radius:50%;border:2.5px solid var(--acc-bg);border-top-color:var(--acc);animation:spin .65s linear infinite;display:none;flex-shrink:0}
+.stage.active .ssp{display:block}
+@keyframes spin{to{transform:rotate(360deg)}}
+.sprg{grid-column:2/-1;height:5px;background:var(--border);border-radius:3px;overflow:hidden;margin-top:6px}
+.sprgb{height:100%;width:0;background:linear-gradient(90deg,#4f6ef7,#16c784);border-radius:3px;transition:width .9s cubic-bezier(.25,1,.5,1)}
+.stage.active .sprgb{background:linear-gradient(90deg,var(--acc),rgba(79,110,247,.5));animation:scan 1.1s ease-in-out infinite alternate}
+@keyframes scan{from{width:12%}to{width:80%}}
+
+/* TIMING */
+.t3{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px}
+.tbox{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:14px;text-align:center;transition:transform .3s,box-shadow .3s}
+.tbox.lit{transform:translateY(-2px);box-shadow:0 4px 14px rgba(79,110,247,.1)}
+.tv{font-family:var(--mono);font-size:19px;font-weight:500;margin-bottom:5px;color:var(--txt)}
+.tv.b{color:var(--acc)}.tv.g{color:var(--grn2)}.tv.a{color:var(--amb)}
+.tl{font-size:11px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--txt3)}
+.btrack{height:12px;background:var(--border);border-radius:12px;overflow:hidden;display:flex;margin-bottom:10px}
+.bpre{height:100%;width:0;background:linear-gradient(90deg,#60a5fa,#3b82f6);transition:width .9s cubic-bezier(.25,1,.5,1)}
+.binf{height:100%;width:0;background:linear-gradient(90deg,#fbbf24,#f59e0b);transition:width .9s cubic-bezier(.25,1,.5,1)}
+.bleg{display:flex;gap:14px}
+.bleg span{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--txt3)}
+.bleg i{width:12px;height:12px;border-radius:3px;flex-shrink:0;display:inline-block}
+
+/* TRANSCRIPT */
+.tcard{display:none;margin-bottom:24px}
+.tcard.show{display:block;animation:slideup .4s cubic-bezier(.25,1,.5,1)}
+@keyframes slideup{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+.ttotal{margin-left:auto;font-family:var(--mono);font-size:13px;color:var(--grn2);font-weight:500}
+.tbd{padding:20px;font-family:var(--mono);font-size:15px;line-height:1.8;color:var(--txt);border-bottom:1px solid var(--border)}
+.tft{padding:12px 18px;display:flex;align-items:center;gap:10px}
+
+/* TRANSCRIPT HISTORY (Mic mode) */
+.thist{margin-bottom:20px}
+.thist-lbl{font-size:11px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--txt3);margin-bottom:10px}
+.thist-list{display:flex;flex-direction:column;gap:8px;max-height:280px;overflow-y:auto}
+.thist-list::-webkit-scrollbar{width:3px}
+.thist-list::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
+.titem{
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--r);
+  padding:12px 14px;display:flex;align-items:flex-start;gap:10px;
+  animation:fadein .3s ease;
+}
+.titem-idx{font-family:var(--mono);font-size:11px;color:var(--txt4);flex-shrink:0;padding-top:2px}
+.titem-txt{font-family:var(--mono);font-size:14px;color:var(--txt);line-height:1.6;flex:1}
+.titem-ms{font-family:var(--mono);font-size:11px;color:var(--grn2);flex-shrink:0;padding-top:2px}
+
+/* BUTTONS */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:9px 20px;border-radius:10px;font-size:14px;font-weight:600;font-family:var(--ui);cursor:pointer;border:none;transition:all .2s;letter-spacing:.01em;white-space:nowrap}
+.btn svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;flex-shrink:0}
+.btn-ghost{background:var(--acc-bg);color:var(--acc);border:1.5px solid rgba(79,110,247,.22)}
+.btn-ghost:hover{background:rgba(79,110,247,.13)}
+.btn-ok{background:var(--grn-bg);color:var(--grn2);border:1.5px solid var(--grn-bd)}
+.btn-danger{background:var(--red-bg);color:var(--red);border:1.5px solid rgba(239,68,68,.2)}
+.btn-danger:hover{background:rgba(239,68,68,.1)}
+
+@keyframes fadein{from{opacity:0}to{opacity:1}}
+</style>
+</head>
+<body>
+
+<input type="file" id="fi" accept=".wav,.mp3,.flac,.ogg,.m4a">
+
+<header>
+  <div class="logo">
+    <div class="lmark">
+      <svg viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+    </div>
+    <span class="lname">Qwen3<em>-ASR</em></span>
+  </div>
+  <div class="spill" id="spill">
+    <div class="ldot"></div>
+    Connecting…
+  </div>
+</header>
+
+<div class="wrap">
+  <main>
+    <!-- MODE TABS -->
+    <div class="modebar">
+      <button class="modetab active" id="tab-file" onclick="switchMode('file')">
+        <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        File
+      </button>
+      <button class="modetab" id="tab-mic" onclick="switchMode('mic')">
+        <svg viewBox="0 0 24 24"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+        Microphone
+      </button>
+    </div>
+
+    <!-- FILE BAR -->
+    <div class="fbar" id="fbar">
+      <span class="fbhint">Drop an audio file below to begin</span>
+    </div>
+
+    <div class="body">
+      <div class="err" id="err"></div>
+
+      <!-- ===== FILE PANEL ===== -->
+      <div class="panel active" id="panel-file">
+        <div class="dz" id="dz">
+          <div class="dzico">
+            <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          </div>
+          <div class="dztitle">Drop audio file here</div>
+          <div class="dzsub">or click to browse from your computer</div>
+          <div class="dzfmts">
+            <span class="fmt">.wav</span><span class="fmt">.mp3</span>
+            <span class="fmt">.flac</span><span class="fmt">.ogg</span><span class="fmt">.m4a</span>
+          </div>
+        </div>
+
+        <div class="ww" id="ww">
+          <div class="wwlbl">Waveform</div>
+          <canvas id="wc" height="64"></canvas>
+        </div>
+
+        <div class="g2">
+          <div class="card">
+            <div class="chd">
+              <div class="cico blue"><svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></div>
+              <span class="ctitle">Processing Pipeline</span>
+            </div>
+            <div class="cbd">
+              <div class="stage" id="s1"><div class="snum">1</div><div><div class="sname">Upload</div><div class="ssub" id="s1s">Waiting for file…</div></div><div class="sright"><div class="sck"><svg viewBox="0 0 12 12"><polyline points="1.5,6 4.5,9 10.5,3"/></svg></div><div class="ssp"></div><span class="sms" id="s1t">—</span></div><div class="sprg"><div class="sprgb" id="p1"></div></div></div>
+              <div class="stage" id="s2"><div class="snum">2</div><div><div class="sname">Preprocess Audio</div><div class="ssub" id="s2s">Awaiting upload…</div></div><div class="sright"><div class="sck"><svg viewBox="0 0 12 12"><polyline points="1.5,6 4.5,9 10.5,3"/></svg></div><div class="ssp"></div><span class="sms" id="s2t">—</span></div><div class="sprg"><div class="sprgb" id="p2"></div></div></div>
+              <div class="stage" id="s3"><div class="snum">3</div><div><div class="sname">LLM Inference</div><div class="ssub" id="s3s">Qwen3-ASR ready…</div></div><div class="sright"><div class="sck"><svg viewBox="0 0 12 12"><polyline points="1.5,6 4.5,9 10.5,3"/></svg></div><div class="ssp"></div><span class="sms" id="s3t">—</span></div><div class="sprg"><div class="sprgb" id="p3"></div></div></div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="chd">
+              <div class="cico green"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div>
+              <span class="ctitle">Timing Breakdown</span>
+            </div>
+            <div class="cbd">
+              <div class="t3">
+                <div class="tbox" id="tb1"><div class="tv b" id="tvpre">—</div><div class="tl">Preprocess</div></div>
+                <div class="tbox" id="tb2"><div class="tv a" id="tvinf">—</div><div class="tl">Inference</div></div>
+                <div class="tbox" id="tb3"><div class="tv g" id="tvtot">—</div><div class="tl">Total</div></div>
+              </div>
+              <div class="btrack"><div class="bpre" id="bpre"></div><div class="binf" id="binf"></div></div>
+              <div class="bleg"><span><i style="background:#3b82f6"></i>Preprocess</span><span><i style="background:#f59e0b"></i>Inference</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card tcard" id="tcard">
+          <div class="chd">
+            <div class="cico blue"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg></div>
+            <span class="ctitle">Transcript</span>
+            <span class="ttotal" id="ttotal"></span>
+          </div>
+          <div class="tbd" id="ttext"></div>
+          <div class="tft">
+            <button class="btn btn-ghost" id="cpbtn" onclick="doCopy('ttext','cpbtn')">
+              <svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+              Copy text
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== MIC PANEL ===== -->
+      <div class="panel" id="panel-mic">
+        <!-- Mic Control -->
+        <div class="mz mz-idle" id="mz">
+          <div class="mzring">
+            <button class="mzbtn" id="mzbtn" onclick="toggleMic()">
+              <svg class="mic-icon" viewBox="0 0 24 24"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+              <svg class="stop-icon" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+            </button>
+          </div>
+          <div class="mzlabel" id="mzlabel">Click to start recording</div>
+          <div class="mzsub" id="mzsub">VAD detects speech automatically · stops on silence</div>
+          <div><span class="vadstat idle" id="vadstat"><span class="vaddot"></span><span id="vadtxt">Idle</span></span></div>
+        </div>
+
+        <!-- Mic live waveform -->
+        <div class="mwrap" id="mwrap">
+          <div class="mwlbl">Live Input</div>
+          <canvas id="mwc" height="64"></canvas>
+        </div>
+
+        <!-- Transcript history -->
+        <div class="thist" id="thist" style="display:none">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+            <div class="thist-lbl">Transcript History</div>
+            <button class="btn btn-danger" style="padding:5px 12px;font-size:12px" onclick="clearHistory()">
+              <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
+              Clear
+            </button>
+          </div>
+          <div class="thist-list" id="thist-list"></div>
+        </div>
+      </div>
+
+    </div>
+  </main>
+</div>
+
+<script>
+// API base URL is derived from the hostname that served this page,
+// so the demo works correctly whether opened on localhost or via a
+// remote server IP — no manual configuration required.
+const API = `http://${window.location.hostname}:8000`;
+
+let busy = false;
+let currentMode = 'file';
+
+// ── Health check ──────────────────────────────────────────────────────────
+fetch(`${API}/health`).then(r => {
+  const p = document.getElementById('spill');
+  if (r.ok) { p.innerHTML = '<div class="ldot"></div>Server online'; }
+  else throw 0;
+}).catch(() => {
+  const p = document.getElementById('spill');
+  p.style.cssText = 'background:#fef2f2;border-color:rgba(239,68,68,.25);color:#dc2626';
+  p.innerHTML = '<div style="width:8px;height:8px;border-radius:50%;background:#ef4444;flex-shrink:0"></div>Offline';
+});
+
+// ── Mode switch ───────────────────────────────────────────────────────────
+function switchMode(mode) {
+  currentMode = mode;
+  document.querySelectorAll('.modetab').forEach(t => t.classList.remove('active'));
+  document.getElementById('tab-' + mode).classList.add('active');
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.getElementById('panel-' + mode).classList.add('active');
+
+  document.getElementById('fbar').style.display = mode === 'file' ? '' : 'none';
+
+  if (mode !== 'mic' && micActive) stopMic();
+  hideErr();
+}
+
+// ── FILE MODE ─────────────────────────────────────────────────────────────
+const dz = document.getElementById('dz');
+const fi = document.getElementById('fi');
+
+dz.addEventListener('click', () => fi.click());
+dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('drag'); });
+dz.addEventListener('dragleave', () => dz.classList.remove('drag'));
+dz.addEventListener('drop', e => { e.preventDefault(); dz.classList.remove('drag'); const f = e.dataTransfer.files[0]; if (f) handleLocal(f); });
+fi.addEventListener('change', e => { const f = e.target.files[0]; if (f) handleLocal(f); fi.value = ''; });
+
+function handleLocal(f) {
+  rstFile();
+  const url = URL.createObjectURL(f);
+  document.getElementById('fbar').innerHTML =
+    `<span class="fbname">${f.name}</span><span class="fbsz">${(f.size/1024).toFixed(1)} KB</span><audio controls src="${url}"></audio>`;
+  drawWaveFile(f);
+  runFile(f);
+}
+
+// File waveform
+async function drawWaveFile(blob) {
+  const w = document.getElementById('ww'), cv = document.getElementById('wc');
+  w.classList.add('show');
+  try {
+    const ctx = new AudioContext(), buf = await blob.arrayBuffer();
+    const dec = await ctx.decodeAudioData(buf), d = dec.getChannelData(0);
+    drawWaveOnCanvas(cv, d, 64);
+    ctx.close();
+  } catch {}
+}
+
+function drawWaveOnCanvas(cv, d, vh) {
+  const W = cv.offsetWidth * devicePixelRatio; cv.width = W; cv.height = vh * devicePixelRatio;
+  const c = cv.getContext('2d'); c.scale(devicePixelRatio, devicePixelRatio);
+  const vw = cv.offsetWidth, step = Math.ceil(d.length / vw);
+  c.clearRect(0, 0, vw, vh);
+  const g = c.createLinearGradient(0, 0, vw, 0);
+  g.addColorStop(0, '#4f6ef7'); g.addColorStop(.45, '#16c784'); g.addColorStop(1, '#f59e0b');
+  c.fillStyle = g;
+  for (let i = 0; i < vw; i++) {
+    let mx = 0;
+    for (let j = 0; j < step; j++) { const v = Math.abs(d[i*step+j] || 0); if (v > mx) mx = v; }
+    const bh = Math.max(2, mx * vh * .88);
+    c.fillRect(i, (vh - bh) / 2, 1, bh);
+  }
+}
+
+// File pipeline UI helpers
+function rstFile() {
+  [1,2,3].forEach(n => {
+    const e = document.getElementById('s'+n);
+    e.classList.remove('active','done');
+    document.getElementById('s'+n+'t').textContent = '—';
+    document.getElementById('p'+n).style.width = '0';
+  });
+  document.getElementById('s1s').textContent = 'Waiting for file…';
+  document.getElementById('s2s').textContent = 'Awaiting upload…';
+  document.getElementById('s3s').textContent = 'Qwen3-ASR ready…';
+  document.getElementById('tcard').classList.remove('show');
+  ['tvpre','tvinf','tvtot'].forEach(id => document.getElementById(id).textContent = '—');
+  ['bpre','binf'].forEach(id => document.getElementById(id).style.width = '0');
+  ['tb1','tb2','tb3'].forEach(id => document.getElementById(id).classList.remove('lit'));
+  document.getElementById('ww').classList.remove('show');
+  hideErr();
+}
+
+function act(n) { const e = document.getElementById('s'+n); e.classList.remove('done'); e.classList.add('active'); }
+function dn(n, ms, pct) {
+  const e = document.getElementById('s'+n); e.classList.remove('active'); e.classList.add('done');
+  document.getElementById('s'+n+'t').textContent = fmt(ms);
+  setTimeout(() => document.getElementById('p'+n).style.width = pct + '%', 80);
+}
+
+async function runFile(file) {
+  if (busy) return; busy = true;
+  act(1);
+  document.getElementById('s1s').textContent = `${file.name} · ${(file.size/1024).toFixed(1)} KB`;
+  const fd = new FormData(); fd.append('file', file);
+  let data;
+  try {
+    const r = await fetch(`${API}/v1/audio/transcriptions`, { method: 'POST', body: fd });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    data = await r.json();
+  } catch (e) {
+    document.getElementById('s1').classList.remove('active');
+    showErr(e.message); busy = false; return;
+  }
+  const pre = data.timings?.preprocess_ms ?? 0;
+  const inf = data.timings?.inference_ms ?? 0;
+  const tot = pre + inf;
+
+  dn(1, 2, 4); await wait(150);
+  dn(2, pre, (pre/tot)*100);
+  document.getElementById('s2s').textContent = `Done · ${fmt(pre)}`;
+  await wait(200);
+  dn(3, inf, (inf/tot)*100);
+  await wait(150);
+
+  document.getElementById('tvpre').textContent = fmt(pre);
+  document.getElementById('tvinf').textContent = fmt(inf);
+  document.getElementById('tvtot').textContent = fmt(tot);
+  setTimeout(() => {
+    document.getElementById('bpre').style.width = (pre/tot*100) + '%';
+    document.getElementById('binf').style.width = (inf/tot*100) + '%';
+    ['tb1','tb2','tb3'].forEach(id => document.getElementById(id).classList.add('lit'));
+  }, 120);
+
+  document.getElementById('ttext').textContent = data.text;
+  document.getElementById('ttotal').textContent = fmt(tot);
+  document.getElementById('tcard').classList.add('show');
+  busy = false;
+}
+
+// ── MIC MODE ──────────────────────────────────────────────────────────────
+let micActive = false;
+let micStream = null;
+let mediaRecorder = null;
+let audioCtx = null;
+let analyser = null;
+let animFrame = null;
+let recordedChunks = [];
+let transcriptCount = 0;
+
+// VAD parameters
+let vadSilenceTimer = null;
+let vadSpeaking = false;
+const VAD_SILENCE_MS = 500;
+const VAD_ENERGY_THRESHOLD = 0.0500;
+const VAD_MIN_SPEECH_MS = 400;
+let vadSpeechStart = null;
+
+function setVadStat(state, text) {
+  const el = document.getElementById('vadstat');
+  el.className = 'vadstat ' + state;
+  document.getElementById('vadtxt').textContent = text;
+}
+
+async function toggleMic() {
+  if (micActive) { stopMic(); return; }
+  hideErr();
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia({ audio: { sampleRate: 16000, channelCount: 1 }, video: false });
+  } catch(e) {
+    showErr('Microphone access denied. Make sure you are on localhost or a secure origin.');
+    return;
+  }
+  micActive = true;
+
+  document.getElementById('mzbtn').classList.add('rec');
+  document.getElementById('mzlabel').textContent = 'Recording… speak now';
+  document.getElementById('mzsub').textContent = 'Will auto-submit after silence';
+  document.getElementById('mz').className = 'mz mz-listening';
+  document.getElementById('mwrap').classList.add('show');
+  setVadStat('idle', 'Waiting for speech…');
+
+  audioCtx = new AudioContext({ sampleRate: 16000 });
+  analyser = audioCtx.createAnalyser();
+  analyser.fftSize = 512;
+  const src = audioCtx.createMediaStreamSource(micStream);
+  src.connect(analyser);
+
+  mediaRecorder = new MediaRecorder(micStream);
+  recordedChunks = [];
+  mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recordedChunks.push(e.data); };
+  mediaRecorder.start(100);
+
+  runVadLoop();
+}
+
+function stopMic() {
+  micActive = false;
+  vadSpeaking = false;
+  if (vadSilenceTimer) { clearTimeout(vadSilenceTimer); vadSilenceTimer = null; }
+  if (animFrame) { cancelAnimationFrame(animFrame); animFrame = null; }
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
+  if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
+  if (audioCtx) { audioCtx.close(); audioCtx = null; }
+
+  document.getElementById('mzbtn').classList.remove('rec');
+  document.getElementById('mzlabel').textContent = 'Click to start recording';
+  document.getElementById('mzsub').textContent = 'VAD detects speech automatically · stops on silence';
+  document.getElementById('mz').className = 'mz mz-idle';
+  document.getElementById('mwrap').classList.remove('show');
+  setVadStat('idle', 'Idle');
+}
+
+function runVadLoop() {
+  if (!micActive) return;
+  const buf = new Float32Array(analyser.fftSize);
+  const cv = document.getElementById('mwc');
+
+  const loop = () => {
+    if (!micActive) return;
+    animFrame = requestAnimationFrame(loop);
+    analyser.getFloatTimeDomainData(buf);
+
+    // Draw live waveform
+    const W = cv.offsetWidth * devicePixelRatio; cv.width = W; cv.height = 64 * devicePixelRatio;
+    const c = cv.getContext('2d'); c.scale(devicePixelRatio, devicePixelRatio);
+    const vw = cv.offsetWidth, vh = 64;
+    c.clearRect(0, 0, vw, vh);
+    c.beginPath();
+    c.strokeStyle = vadSpeaking ? '#ef4444' : '#4f6ef7';
+    c.lineWidth = 1.5;
+    const step = buf.length / vw;
+    for (let i = 0; i < vw; i++) {
+      const v = buf[Math.floor(i * step)] || 0;
+      const y = (vh / 2) + v * vh * 0.42;
+      i === 0 ? c.moveTo(i, y) : c.lineTo(i, y);
+    }
+    c.stroke();
+
+    // VAD: RMS energy threshold
+    let rms = 0;
+    for (let i = 0; i < buf.length; i++) rms += buf[i] * buf[i];
+    rms = Math.sqrt(rms / buf.length);
+
+    if (rms > VAD_ENERGY_THRESHOLD) {
+      if (!vadSpeaking) {
+        vadSpeaking = true;
+        vadSpeechStart = Date.now();
+        setVadStat('speech', 'Speaking…');
+      }
+      if (vadSilenceTimer) { clearTimeout(vadSilenceTimer); vadSilenceTimer = null; }
+    } else {
+      if (vadSpeaking && !vadSilenceTimer) {
+        vadSilenceTimer = setTimeout(() => {
+          if (!micActive) return;
+          const speechDur = Date.now() - (vadSpeechStart || 0);
+          vadSpeaking = false;
+          if (speechDur >= VAD_MIN_SPEECH_MS) {
+            setVadStat('processing', 'Processing…');
+            submitMicAudio();
+          }
+          vadSilenceTimer = null;
+        }, VAD_SILENCE_MS);
+      }
+    }
+  };
+  loop();
+}
+
+async function submitMicAudio() {
+  if (!mediaRecorder || recordedChunks.length === 0) return;
+
+  const chunks = [...recordedChunks];
+  recordedChunks = [];
+  stopMic();
+  setVadStat('processing', 'Processing…');
+  document.getElementById('mzbtn').disabled = true;
+
+  const blob = new Blob(chunks, { type: mediaRecorder.mimeType || 'audio/webm' });
+  const t0 = performance.now();
+
+  try {
+    const fd = new FormData();
+    fd.append('file', blob, 'recording.webm');
+    const r = await fetch(`${API}/v1/audio/transcriptions`, { method: 'POST', body: fd });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    const elapsed = Math.round(performance.now() - t0);
+    if (data.text && data.text.trim()) addTranscriptItem(data.text.trim(), elapsed);
+  } catch(e) {
+    showErr('Inference failed: ' + e.message);
+  } finally {
+    document.getElementById('mzbtn').disabled = false;
+    setVadStat('idle', 'Idle');
+  }
+}
+
+function addTranscriptItem(text, ms) {
+  transcriptCount++;
+  const hist = document.getElementById('thist');
+  const list = document.getElementById('thist-list');
+  hist.style.display = '';
+
+  const item = document.createElement('div');
+  item.className = 'titem';
+  item.innerHTML = `
+    <span class="titem-idx">#${transcriptCount}</span>
+    <span class="titem-txt">${text}</span>
+    <span class="titem-ms">${fmt(ms)}</span>
+  `;
+  list.appendChild(item);
+  list.scrollTop = list.scrollHeight;
+}
+
+function clearHistory() {
+  transcriptCount = 0;
+  document.getElementById('thist-list').innerHTML = '';
+  document.getElementById('thist').style.display = 'none';
+}
+
+// ── Shared utils ──────────────────────────────────────────────────────────
+function fmt(ms) { return ms >= 1000 ? `${(ms/1000).toFixed(2)}s` : `${Math.round(ms)}ms`; }
+function wait(ms) { return new Promise(r => setTimeout(r, ms)); }
+function showErr(m) { const b = document.getElementById('err'); b.textContent = '⚠ ' + m; b.classList.add('show'); }
+function hideErr() { document.getElementById('err').classList.remove('show'); }
+
+function doCopy(srcId, btnId) {
+  const txt = document.getElementById(srcId).textContent;
+  const successUI = () => {
+    const b = document.getElementById(btnId);
+    b.className = 'btn btn-ok';
+    b.innerHTML = '<svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>Copied!';
+    setTimeout(() => {
+      b.className = 'btn btn-ghost';
+      b.innerHTML = '<svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>Copy text';
+    }, 2000);
+  };
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(txt).then(successUI);
+  } else {
+    const ta = document.createElement('textarea');
+    ta.value = txt;
+    ta.style.cssText = 'position:fixed;left:-999999px';
+    document.body.appendChild(ta);
+    ta.focus(); ta.select();
+    try { document.execCommand('copy'); successUI(); } catch {}
+    document.body.removeChild(ta);
+  }
+}
+</script>
+</body>
+</html>

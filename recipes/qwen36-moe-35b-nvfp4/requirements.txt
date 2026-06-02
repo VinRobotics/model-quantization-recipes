@@ -1,0 +1,12 @@
+# Hugging Face Ecosystem
+transformers==5.5.4
+accelerate==1.12.0
+datasets==2.19.0
+huggingface-hub==0.36.2
+tokenizers==0.22.2
+safetensors==0.7.0
+# Nvidia Tools
+nvidia-modelopt[all]==0.39.0
+# Utilities
+numpy==2.2.6
+tqdm==4.67.3

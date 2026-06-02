@@ -1,0 +1,13 @@
+# Hugging Face Ecosystem
+transformers==4.57.6
+datasets==2.19.0
+huggingface-hub==0.36.2
+tokenizers==0.22.2
+# Audio
+soundfile==0.12.1
+# Training & Logging
+tensorboard==2.17.0
+PyYAML==6.0.2
+# Utilities
+numpy==2.2.6
+tqdm==4.67.3

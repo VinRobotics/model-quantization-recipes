@@ -1,0 +1,13 @@
+# Hugging Face Ecosystem
+datasets==2.19.0
+safetensors==0.7.0
+huggingface-hub==0.36.2
+# Nvidia Tools
+nvidia-modelopt[all]==0.39.0
+# Audio
+soundfile==0.12.1
+# Evaluation
+jiwer==3.0.4
+# Utilities
+tqdm==4.67.3
+requests==2.32.3

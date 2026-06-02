@@ -1,0 +1,102 @@
+[project]
+name = "model-quantization-recipes"
+version = "0.1.0"
+description = "Quantization recipes and deployment workflows for LLM and ASR models."
+requires-python = ">=3.10,<3.13"
+authors = [
+  { name = "quangnd58" },
+  { name = "vrfai" },
+]
+license = { text = "BSD-3-Clause" }
+
+[project.optional-dependencies]
+gemma4 = [
+  "torch>=2.3",
+  "transformers==4.57.6",
+  "accelerate==1.12.0",
+  "datasets==2.19.0",
+  "huggingface-hub==0.36.2",
+  "tokenizers==0.22.2",
+  "safetensors==0.7.0",
+  "nvidia-modelopt[all]==0.39.0",
+  "peft==0.18.1",
+  "diffusers==0.37.0",
+  "sentencepiece==0.2.1",
+  "protobuf==6.33.6",
+  "numpy==2.2.6",
+  "tqdm==4.67.3",
+]
+qwen3-asr = [
+  "torch>=2.8.0",
+  "torchaudio>=2.8.0",
+  "transformers>=4.40.0",
+  "safetensors>=0.4.0",
+  "huggingface-hub>=0.23.0",
+  "nvidia-modelopt>=0.39.0",
+  "soundfile>=0.12.0",
+  "jiwer>=3.0.0",
+  "datasets==2.19.0",
+  "tqdm>=4.66.0",
+  "requests>=2.31.0",
+  "numpy>=1.24.0",
+  "pyyaml>=6.0.0",
+]
+qwen36-27b = [
+  "torch>=2.10.0",
+  "torchvision>=0.25.0",
+  "transformers==5.6.0",       # 5.6.x required; patches in quantize.sh target this
+  "accelerate==1.12.0",
+  "datasets==2.19.0",
+  "huggingface-hub==0.36.2",
+  "tokenizers==0.22.2",
+  "safetensors==0.7.0",
+  "llmcompressor==0.10.0.1",
+  "compressed-tensors==0.14.0.1",
+  "sentencepiece==0.2.1",
+  "numpy==2.2.6",
+  "tqdm==4.67.3",
+  "pyyaml>=6.0.2",
+]
+qwen36-moe-35b-nvfp4 = [
+  "torch>=2.3",
+  "transformers==5.5.4",
+  "accelerate==1.12.0",
+  "datasets==2.19.0",
+  "nvidia-modelopt[all]==0.39.0",
+  "safetensors==0.7.0",
+]
+cosmos-reason2 = [
+  "torch>=2.10.0",
+  "torchvision>=0.25.0",
+  "transformers==4.57.6",
+  "accelerate==1.12.0",
+  "datasets==2.19.0",
+  "huggingface-hub==0.36.2",
+  "tokenizers==0.22.2",
+  "safetensors==0.7.0",
+  "llmcompressor==0.10.0.1",
+  "compressed-tensors==0.14.0.1",
+  "peft==0.18.1",
+  "diffusers==0.37.0",
+  "sentencepiece==0.2.1",
+  "numpy==2.2.6",
+  "tqdm==4.67.3",
+]
+
+[tool.ruff]
+target-version = "py312"
+
+[tool.mypy]
+python_version = "3.10"
+warn_unused_configs = true
+
+[[tool.mypy.overrides]]
+module = [
+  "datasets",
+  "modelopt",
+  "modelopt.*",
+  "torch",
+  "transformers",
+  "llmcompressor",
+]
+ignore_missing_imports = true

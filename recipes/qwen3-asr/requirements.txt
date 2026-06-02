@@ -1,0 +1,28 @@
+# ── Core ──────────────────────────────────────────────────────────────────────
+transformers>=4.40.0
+safetensors>=0.4.0
+huggingface_hub>=0.23.0
+
+# ── Quantization (NVIDIA ModelOpt) ────────────────────────────────────────────
+# 0.39.0+ required for stable INT8/INT4/FP8/NVFP4 export with current ModelOpt API.
+nvidia-modelopt>=0.39.0
+
+# ── Serving (vLLM path only — x86 + NVIDIA Ada/Hopper/Blackwell) ─────────────
+# Install separately; version must match your CUDA toolkit:
+#   pip install vllm
+# See: https://docs.vllm.ai/en/latest/getting_started/installation.html
+
+# ── Audio processing ──────────────────────────────────────────────────────────
+soundfile>=0.12.0
+
+# ── Evaluation ────────────────────────────────────────────────────────────────
+jiwer>=3.0.0
+
+# ── Datasets
+# IMPORTANT: Pin to 2.19.0 for trt-edgellm/quantize.py calibration data loader.
+# Newer versions change audio decoding behaviour and may break streaming.
+datasets==2.19.0
+
+# ── Utilities ─────────────────────────────────────────────────────────────────
+tqdm>=4.66.0
+requests>=2.31.0

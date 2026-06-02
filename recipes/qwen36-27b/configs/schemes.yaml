@@ -1,0 +1,77 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 VinRobotics
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# configs/schemes.yaml
+#
+# Quantization scheme definitions for Qwen3.6-27B.
+# Edit this file to add, remove, or adjust schemes without touching quantize.py.
+#
+# Schema per entry:
+#   <key>:
+#     scheme:  <llm-compressor scheme string>
+#     targets: <layer type; default "Linear">
+#     ignore:  <list of regex or exact module names to keep in BF16>
+#
+# Architecture note — Qwen3.6-27B interleaves:
+#   3 × DeltaNet (linear_attn) + 1 × full GQA every 4 layers (16 groups × 4 = 64 layers).
+#   DeltaNet recurrent cores are numerically sensitive and must be excluded from all schemes.
+
+# ─────────────────────────────────────────────────────────────────────────────
+# FP8  — W8A8, static per-tensor symmetric
+# Hardware: Ampere (SM 89) / Hopper / Blackwell
+# ─────────────────────────────────────────────────────────────────────────────
+fp8:
+  scheme: FP8
+  targets: Linear
+  ignore:
+    - lm_head
+    # Vision encoder — all 27 blocks (attn + mlp) + merger
+    - re:model\.visual\.blocks\.\d+\..*
+    - model.visual.merger.linear_fc1
+    - model.visual.merger.linear_fc2
+    # DeltaNet / linear-attention layers (numerically sensitive)
+    - re:model\.language_model\.layers\.\d+\.linear_attn\..*
+
+# ─────────────────────────────────────────────────────────────────────────────
+# NVFP4  — weights FP4, activations FP4 (dynamic local), scales FP8
+# Hardware: Blackwell only (SM 120+)
+# ─────────────────────────────────────────────────────────────────────────────
+nvfp4:
+  scheme: NVFP4
+  targets: Linear
+  ignore:
+    - lm_head
+    - re:model\.visual\.blocks\.\d+\..*
+    - model.visual.merger.linear_fc1
+    - model.visual.merger.linear_fc2
+    - re:model\.language_model\.layers\.\d+\.linear_attn\..*
+
+# ─────────────────────────────────────────────────────────────────────────────
+# INT8  — W8A8 integer, per-tensor symmetric
+# Hardware: any GPU with INT8 tensor cores (Turing+)
+# ─────────────────────────────────────────────────────────────────────────────
+int8:
+  scheme: W8A8
+  targets: Linear
+  ignore:
+    - lm_head
+    - re:model\.visual\.blocks\.\d+\..*
+    - model.visual.merger.linear_fc1
+    - model.visual.merger.linear_fc2
+    - re:model\.language_model\.layers\.\d+\.linear_attn\..*
+
+# ─────────────────────────────────────────────────────────────────────────────
+# INT4  — W4A16, weight-only 4-bit (GPTQ-compatible)
+# Hardware: any GPU
+# Note: For higher quality, replace QuantizationModifier with GPTQModifier in
+#       quantize.py and set damping_frac / static_groups as needed.
+# ─────────────────────────────────────────────────────────────────────────────
+int4:
+  scheme: W4A16
+  targets: Linear
+  ignore:
+    - lm_head
+    - re:model\.visual\.blocks\.\d+\..*
+    - model.visual.merger.linear_fc1
+    - model.visual.merger.linear_fc2
+    - re:model\.language_model\.layers\.\d+\.linear_attn\..*
