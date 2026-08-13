@@ -35,6 +35,32 @@ this recipe is gated on `z_latents` cosine against the FP32 reference, not on ge
 
 ## Results
 
+### Task accuracy — does the quantized model still pick the same waypoint?
+
+Measured with `quantize/benchmark_accuracy.py` on 42 held-out samples from two scenes,
+identical samples and greedy decoding, PyTorch on Jetson Thor:
+
+| Checkpoint | pixel_goal_l2 mean | median | parse rate |
+|---|---|---|---|
+| System 2, BF16 (unquantized) | 47.24 px | **27.05 px** | 100 % |
+| System 2, FP8 (s1) | 50.12 px | **26.97 px** | 100 % |
+
+31 of 42 replies are byte-identical and the **median deviation between the two is 0.00 px**.
+The 2.88 px gap in the mean is carried by 8 samples, worst case 89 px — it is a small number
+of disagreements, not a systematic shift, which is why both statistics are reported. For
+reference, the source project's self-validation gate for this metric is a median under 60 px.
+
+Caveat worth keeping in view: this is a **weight-quantization** measurement. FP8 W8A8 also
+quantizes activations, which the TensorRT engine does and the PyTorch path here does not, so
+treat it as a lower bound on the engine's deviation rather than a prediction of it.
+
+The official InternVLA-N1 metrics (SR, SPL, NE, OS, nDTW) are all closed-loop and need
+Habitat or InternUtopia plus MP3D scenes. Neither is installed here and neither is practical
+on a Jetson, so the published table (DualVLN: NE 4.05 / SR 64.3 / SPL 58.5 on VLN-CE R2R) is
+a literature reference point, not something this recipe reproduces.
+
+### Engine fidelity and latency
+
 Measured on Jetson Thor, 12 held-out multi-image VLN steps:
 
 | LLM variant | z_latents vs FP32 | agrees w/ PyTorch | System 2 latency | LLM engine |
