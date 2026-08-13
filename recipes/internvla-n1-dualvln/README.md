@@ -35,6 +35,40 @@ this recipe is gated on `z_latents` cosine against the FP32 reference, not on ge
 
 ## Results
 
+### Benchmark matrix
+
+All three variants built from the same repackaged System 2 and measured on Jetson Thor,
+batch 1, on an idle GPU.
+
+| Variant | checkpoint | LLM engine | visual | prefill (1024) | decode (pastKV 1024) | z_latents (engine) | z_latents (weights) | pixel L2 mean / median |
+|---|---|---|---|---|---|---|---|---|
+| BF16 (unquantized) | 16.6 GB | 14.15 GB | 1.36 GB | 135.8 ms | 56.4 ms | **0.999471** | — | 47.24 / 27.05 px |
+| **FP8 s1** | 10.1 GB | **7.62 GB** | 1.36 GB | **82.1 ms** | **31.5 ms** | **0.991861** | 0.998020 | 46.26 / **22.51 px** |
+| NVFP4 s1 (experimental) | 7.2 GB | 4.77 GB | 1.36 GB | 73.2 ms | 20.2 ms | 0.931005 ✗ | 0.987986 | 40.69 / 23.54 px |
+
+Weight quantization error, mean relative over 21 projections in layers 0/13/27:
+FP8 **2.67 %**, NVFP4 **9.45 %**.
+
+**FP8 is the recommended scheme.** Against BF16 it is 1.86x smaller and 1.65x/1.79x faster,
+holds the bridge at 0.9919, and the median waypoint error does not get worse — it improves
+slightly (27.05 → 22.51 px), which is within the spread of a 42-sample set and should be read
+as "unchanged", not as a gain from quantization.
+
+**NVFP4 is faster and smaller still but fails the gate.** Its bridge sits at 0.931, below the
+0.99 threshold, so it is not recommended for navigation despite the attractive size and
+latency. See the NVFP4 section for where that number comes from.
+
+### Two things to know before reading these numbers
+
+**Run everything on an idle GPU.** Latency measured while another job shared the device came
+out 40-60 % higher (FP8 prefill 117 ms against 82 ms). The measurement script does not
+enforce this.
+
+**The "identical replies" count is a weak indicator.** It moved from 31/42 to 11/42 for FP8
+across code revisions of the checkpoint loader, while `pixel_goal_l2` barely changed. Greedy
+decoding over a 152k vocabulary flips on tiny logit differences, so treat the L2 median as the
+number that matters and the identity count as colour.
+
 ### Task accuracy — does the quantized model still pick the same waypoint?
 
 Measured with `quantize/benchmark_accuracy.py` on 42 held-out samples from two scenes,
