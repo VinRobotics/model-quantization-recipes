@@ -191,6 +191,13 @@ lock unsatisfiable, so numpy is deliberately absent from this recipe's extra. Ru
 
     pip install "numpy==1.26.4" "scipy==1.13.1"
 
+**Step 2c — System 1 needs a different transformers.** The InternNav modeling code reads
+`config.hidden_size` off the top-level config, which transformers 5.x no longer flattens, so
+System-1 export fails there with `'InternVLAN1ModelConfig' object has no attribute
+'hidden_size'`. Run the System-1 steps under **transformers 4.51.3** with `diffusers==0.33.1`
+and `onnx==1.22.0` present. The System-2 path (repackage, quantize, export, engine build,
+latent verification) is unaffected and runs on either.
+
 **Step 3 — dependencies that are not on PyPI.** These must be present before running anything:
 
 | Dependency | How |
