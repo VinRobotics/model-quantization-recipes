@@ -1,0 +1,50 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 VinRobotics
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# InternVLA-N1-DualVLN — Python dependencies (Jetson Thor / aarch64, Python 3.12).
+# PyTorch is intentionally absent; see requirements-torch.txt.
+#
+#   pip install -r requirements.txt
+
+# Hugging Face Ecosystem
+transformers==4.51.3
+accelerate==1.13.0
+safetensors==0.8.0
+huggingface-hub>=0.23.0
+
+# Diffusion (System 1 trajectory head)
+diffusers==0.33.1
+
+# Numerics — pinned below numpy 2 so OpenCV and diffusers keep working on Jetson
+numpy==1.26.4
+scipy==1.13.1
+pandas>=2.0.0
+pillow>=10.0.0
+
+# ONNX export
+onnx==1.22.0
+onnxscript==0.7.1
+onnx-graphsurgeon==0.6.1
+
+# Quantization
+nvidia-modelopt==0.44.0
+
+# Utilities
+numpy-quaternion>=2023.0.0
+pyyaml>=6.0.0
+tqdm>=4.66.0
+
+# Calibration dataset loader — installing this may pull numpy>=2; if it does,
+# re-pin numpy==1.26.4 and scipy==1.13.1 afterwards.
+# datasets==2.19.0
+
+# =============================================================================
+# Not available on PyPI for aarch64 — install these separately:
+#
+#   TensorRT 10.13    provided by JetPack, imported from /usr/lib/python3.12/dist-packages
+#   tensorrt-edgellm  build from source, then: pip install --no-deps -e $TRT_EDGE_LLM
+#   OpenCV (cv2)      system package on Jetson
+#   InternNav         git clone; export INTERNNAV_PATH. Needed only for System 1
+#                     export and the agent-level verifications.
+#   flash-attn        optional, only for the PyTorch reference baseline
+# =============================================================================

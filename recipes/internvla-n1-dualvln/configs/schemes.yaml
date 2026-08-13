@@ -1,0 +1,109 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 VinRobotics
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# Quantization schemes and the scheme x strategy validity matrix for
+# InternVLA-N1-DualVLN on Jetson Thor (sm_110).
+#
+# Two of the constraints below are hardware facts, not tuning choices. Encoding them
+# here means an impossible combination is rejected before the model is loaded, instead
+# of crashing forty minutes into a run:
+#
+#   * NVFP4 cannot touch the Qwen2.5-VL vision tower. Its MLP intermediate_size is
+#     3420, and 3420 / 16 = 213.75 -- not divisible by the NVFP4 block size.
+#   * NVFP4 KV cache requires sm100f (datacenter Blackwell). Thor is sm110, so the KV
+#     cache is FP8 even when the weights are NVFP4. This is deliberate; do not
+#     "fix" it by pointing at an NVFP4 KV preset.
+
+# --------------------------------------------------------------------------- #
+# Strategies -- which parts of System 2 get quantized
+# --------------------------------------------------------------------------- #
+strategies:
+  s1:
+    description: LLM backbone only -- fastest, safest, the validated default
+    quantize_kv_cache: false
+    quantize_visual: false
+  s2:
+    description: LLM + KV cache -- lower memory for long multi-image prompts
+    quantize_kv_cache: true
+    quantize_visual: false
+  s3:
+    description: LLM + vision tower -- full VLM quantization
+    quantize_kv_cache: false
+    quantize_visual: true
+  s4:
+    description: LLM + vision tower + KV cache -- maximum compression
+    quantize_kv_cache: true
+    quantize_visual: true
+
+# --------------------------------------------------------------------------- #
+# Schemes -- weight/activation formats, mapped to ModelOpt presets
+#
+# calib_batch_size applies to text calibration only; image calibration is always 1.
+# --------------------------------------------------------------------------- #
+schemes:
+  fp8_default:
+    modelopt_preset: FP8_DEFAULT_CFG
+    description: FP8 W8A8 per-tensor -- balanced accuracy and speed
+    calib_batch_size: 8
+    status: validated
+  fp8_per_channel:
+    modelopt_preset: FP8_PER_CHANNEL_PER_TOKEN_CFG
+    description: FP8 W8A8 per-channel weight, per-token activation -- highest FP8 accuracy
+    calib_batch_size: 8
+    status: validated
+  nvfp4_default:
+    modelopt_preset: NVFP4_DEFAULT_CFG
+    description: NVFP4 W4A4 -- smallest footprint
+    calib_batch_size: 4
+    status: experimental
+  nvfp4_awq_full:
+    modelopt_preset: NVFP4_AWQ_FULL_CFG
+    description: NVFP4 W4A4 + AWQ (lite + clip) -- best NVFP4 accuracy
+    calib_batch_size: 1
+    status: experimental
+  nvfp4_local_hessian:
+    modelopt_preset: NVFP4_W4A4_WEIGHT_LOCAL_HESSIAN_CFG
+    description: NVFP4 W4A4 + local Hessian -- highest-accuracy NVFP4, slow
+    calib_batch_size: 1
+    status: experimental
+
+# --------------------------------------------------------------------------- #
+# KV cache pairing
+# --------------------------------------------------------------------------- #
+kv_cache:
+  preset: FP8_KV_CFG
+  applies_to: [fp8_default, fp8_per_channel, nvfp4_default, nvfp4_awq_full, nvfp4_local_hessian]
+  note: >-
+    FP8 KV for every weight format. NVFP4 KV needs sm100f at inference time, which Thor
+    (sm110) does not provide; FP8 KV pairs portably with NVFP4 weights.
+
+# --------------------------------------------------------------------------- #
+# Modules excluded when a strategy leaves the vision tower alone.
+#
+# ModelOpt presets exclude *lm_head* by default but NOT the vision tower, so without
+# these globs s1/s2 would silently quantize the ViT.
+# --------------------------------------------------------------------------- #
+visual_exclude_patterns:
+  - "*visual*"
+  - "*vision_tower*"
+  - "*multi_modal_projector*"
+
+# --------------------------------------------------------------------------- #
+# Validity matrix -- every combination not listed as blocked or experimental is allowed
+# --------------------------------------------------------------------------- #
+blocked:
+  - schemes: [nvfp4_default, nvfp4_awq_full, nvfp4_local_hessian]
+    strategies: [s3, s4]
+    reason: >-
+      NVFP4 cannot quantize the Qwen2.5-VL vision tower: its MLP intermediate_size is
+      3420 and 3420 / 16 = 213.75, which is not an integer, so the tensor cannot be
+      split into NVFP4 blocks. Use an fp8_* scheme for s3/s4.
+
+experimental:
+  - schemes: [nvfp4_default, nvfp4_awq_full, nvfp4_local_hessian]
+    strategies: [s1, s2]
+    reason: >-
+      NVFP4 weights quantize, export and generate fluent text, but the System 2 -> System 1
+      bridge breaks: z_latents cosine against the FP32 reference falls to 0.647 versus
+      0.9956 for FP8. The model will caption an image correctly and still navigate wrongly.
+      Pass --allow_experimental to proceed. See trt-edgellm/investigate_nvfp4.py.

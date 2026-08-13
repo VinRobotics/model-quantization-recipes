@@ -1,0 +1,31 @@
+# Install PyTorch BEFORE running: pip install -r requirements.txt
+# Pick the line matching your platform:
+#
+# Jetson Thor (JetPack 7.1, CUDA 13.0) — this is the tested configuration:
+#   Use the JetPack-provided wheel. Do NOT install torch from PyPI on Jetson;
+#   the PyPI aarch64 wheels are not built for sm_110 and will fail at runtime.
+#   Verify with:
+#     python -c "import torch; print(torch.__version__, torch.cuda.get_arch_list())"
+#   Expect torch 2.10.0 and 'sm_110' present in the arch list.
+#
+# x86 CUDA 12.8:
+#   pip install torch==2.10.0+cu128 torchvision==0.25.0+cu128 --extra-index-url https://download.pytorch.org/whl/cu128
+#
+# x86 CUDA 13.x:
+#   pip install torch==2.10.0+cu130 torchvision==0.25.0+cu130 --extra-index-url https://download.pytorch.org/whl/cu130
+#
+# -----------------------------------------------------------------------------
+# numpy must be pinned AFTER `uv sync`, not by it.
+#
+# This recipe needs numpy 1.x: OpenCV and diffusers on Jetson break under numpy 2,
+# while three other extras in this repository pin numpy==2.2.6. Rather than declare a
+# pin whose resolution outcome we have not verified, numpy and scipy are left out of
+# this recipe's pyproject extra and installed explicitly below.
+#
+# Run this once after `uv sync --extra internvla-n1-dualvln`:
+#
+#   pip install "numpy==1.26.4" "scipy==1.13.1"
+#
+# Installing `datasets` later can silently upgrade numpy again; re-run the line above
+# if it does.
+# -----------------------------------------------------------------------------
