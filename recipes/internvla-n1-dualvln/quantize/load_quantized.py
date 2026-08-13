@@ -33,6 +33,35 @@ import torch
 from safetensors import safe_open
 
 
+# NVFP4 E2M1: 1 sign, 2 exponent, 1 mantissa bit. Sixteen representable values, two packed
+# per stored byte, with a per-16-element FP8 block scale and one float32 global scale.
+_E2M1 = torch.tensor([0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0,
+                      -0.0, -0.5, -1.0, -1.5, -2.0, -3.0, -4.0, -6.0], dtype=torch.float32)
+NVFP4_BLOCK = 16
+
+
+def unpack_nvfp4(packed: torch.Tensor, block_scale: torch.Tensor,
+                 global_scale: torch.Tensor, dtype: torch.dtype) -> torch.Tensor:
+    """Reconstruct a bf16 weight from ModelOpt's packed NVFP4 representation.
+
+    ``packed`` is uint8 of shape [out, in/2]: low nibble first, then high nibble.
+    ``block_scale`` is FP8 of shape [out, in/16], one scale per 16 input elements.
+    ``global_scale`` is a single float32 that rescales the whole tensor.
+    """
+    lut = _E2M1.to(packed.device)
+    low = lut[(packed & 0x0F).long()]
+    high = lut[(packed >> 4).long()]
+    # Interleave back to the original width: low nibble is element 2i, high is 2i+1.
+    out = torch.stack((low, high), dim=-1).reshape(packed.shape[0], -1)
+
+    scale = block_scale.to(torch.float32) * global_scale.to(torch.float32)
+    scale = scale.repeat_interleave(NVFP4_BLOCK, dim=-1)
+    if scale.shape[-1] != out.shape[-1]:
+        raise ValueError(f"NVFP4 block scale expands to {scale.shape[-1]} columns but the "
+                         f"unpacked weight has {out.shape[-1]}")
+    return (out * scale).to(dtype)
+
+
 def quant_algo(model_path: str) -> Optional[str]:
     """Return the quantization algorithm recorded by ModelOpt, or None if unquantized."""
     cfg = os.path.join(model_path, "hf_quant_config.json")
@@ -70,6 +99,13 @@ def dequantize_state_dict(model_path: str,
     out: dict[str, torch.Tensor] = {}
     n_dequant = 0
     for key, tensor in raw.items():
+        # NVFP4: packed uint8 plus a block scale and a global scale.
+        block = scales.get(key + "_scale")
+        glob = scales.get(key + "_scale_2")
+        if tensor.dtype == torch.uint8 and block is not None and glob is not None:
+            out[key] = unpack_nvfp4(tensor, block, glob, dtype)
+            n_dequant += 1
+            continue
         scale = scales.get(key + "_scale")
         if scale is not None and tensor.dtype in (torch.float8_e4m3fn, torch.float8_e5m2):
             out[key] = tensor.to(torch.float32).mul_(scale.to(torch.float32)).to(dtype)
@@ -80,7 +116,7 @@ def dequantize_state_dict(model_path: str,
         else:
             out[key] = tensor.to(dtype) if tensor.is_floating_point() else tensor
 
-    print(f"      [load] dequantized {n_dequant} FP8 tensors, "
+    print(f"      [load] dequantized {n_dequant} tensors, "
           f"{len(out) - n_dequant} passed through unchanged")
     return out
 
@@ -98,31 +134,22 @@ def load_for_eval(model_path: str, dtype: torch.dtype = torch.bfloat16,
     processor = AutoProcessor.from_pretrained(
         model_path, min_pixels=128 * 28 * 28, max_pixels=2048 * 32 * 32)
 
-    # from_pretrained gives a correctly wired model with its buffers (rope inv_freq and
-    # friends) materialised. For a quantized checkpoint it silently drops the scale
-    # tensors and casts the FP8 weights straight to bf16, so those weights are wrong by
-    # their scale factor -- they get overwritten below. Building on a meta device instead
-    # would avoid the wasted load but leaves the buffers unmaterialised.
-    model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-        model_path, torch_dtype=dtype, low_cpu_mem_usage=True)
-
-    if algo is not None:
+    if algo is None:
+        model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+            model_path, torch_dtype=dtype, low_cpu_mem_usage=True)
+    else:
+        # Hand transformers the already-dequantized weights instead of letting it read the
+        # checkpoint. Two reasons it cannot read this itself: FP8 tensors load without
+        # their scales (silently wrong by 600-1800x), and NVFP4 tensors are packed two
+        # values per byte, so from_pretrained fails outright on the halved width. Passing
+        # state_dict= also avoids loading the whole checkpoint twice.
         state = dequantize_state_dict(model_path, dtype=dtype)
-        own = dict(model.named_parameters())
-        own.update(dict(model.named_buffers()))
-        n_fixed = 0
-        with torch.no_grad():
-            for key, tensor in state.items():
-                target = own.get(key)
-                if target is None:
-                    continue
-                if target.shape != tensor.shape:
-                    raise RuntimeError(f"shape mismatch for {key}: "
-                                       f"model {tuple(target.shape)} vs "
-                                       f"checkpoint {tuple(tensor.shape)}")
-                target.copy_(tensor.to(target.dtype))
-                n_fixed += 1
-        print(f"      [load] applied {n_fixed} dequantized tensors over the raw load")
+        config = AutoConfig.from_pretrained(model_path)
+        if hasattr(config, "quantization_config"):
+            del config.quantization_config
+        model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+            None, config=config, state_dict=state, torch_dtype=dtype,
+            low_cpu_mem_usage=True)
 
     model = model.to(device=device, dtype=dtype).eval()
     return model, processor, algo

@@ -127,6 +127,38 @@ engine and skip their in-script parity check with a message rather than failing;
 project) generates; it now fails with an explanation of the expected file shape rather than
 a bare `FileNotFoundError` at the first read.
 
+### NVFP4 — the 0.647 collapse is not weight quantization
+
+`trt-edgellm/investigate_nvfp4.py` was written to find out why NVFP4 keeps text fluent while
+the bridge collapses. Measured here, in PyTorch, weights only:
+
+| | weight rel-err | weight cos | **z_latents** |
+|---|---|---|---|
+| FP8 | 2.67 % | 0.999644 | **0.998020** |
+| NVFP4 | 9.45 % | 0.995534 | **0.987986** |
+
+**NVFP4 weight quantization costs 0.988, not 0.647.** The weight error is 3.5x FP8's and the
+bridge degrades roughly in proportion — nothing anomalous. So whatever produces 0.647 is
+*not* the weights, and the two remaining candidates are the parts this measurement does not
+model: 4-bit **activation** quantization, and the engine itself.
+
+The engine hypothesis deserves weight here rather than dismissal. This platform has already
+produced one "quantization is broken" conclusion that turned out to be a TensorRT miscompile
+(`fc_h_fusion`, see below), and there is a second known one specific to NVFP4: CASK
+miscompiles when it fuses two or more epilogues into one NVFP4 GEMM at batch 1, fixed by
+`-cask_fusion:max_num_epilogues=1`. A 0.647 measured on an engine built without that
+workaround would be measuring the miscompile, not the format.
+
+Channel analysis rules out the obvious remedy. At the final layer the top 128 channels by
+magnitude carry only 29.5 % of the squared error, and masking them *lowers* cosine rather
+than restoring it — the error is spread, not concentrated in outliers. So AWQ scaling or a
+targeted exclusion cannot recover the weight-side loss; that part is a capacity limit.
+
+**Where this leaves NVFP4:** experimental, and the next step is not more weight analysis. It
+is to rebuild the NVFP4 engine *with* the CASK workaround and re-measure z_latents end to
+end. If that lands near 0.988 the format is usable and the old number was a compiler
+artifact; if it stays at 0.647 the cause is activation quantization.
+
 ### Earlier full-pipeline figures
 
 Measured on Jetson Thor, 12 held-out multi-image VLN steps:
@@ -156,25 +188,28 @@ navigation model), but do not expect it to buy accuracy.
     ├── configs/
     │   └── schemes.yaml                  # scheme x strategy validity matrix
     ├── quantize/                         # HF checkpoint -> quantized HF checkpoint
-    │   ├── README.md
     │   ├── repackage_system2.py          # strip System 1 -> stock Qwen2.5-VL checkpoint
     │   ├── quantize.py                   # ModelOpt driver
-    │   ├── configs.py                    # presets, strategies, validity gate
+    │   ├── quant_schemes.py              # scheme registry + validity gate
     │   ├── calibration.py                # text / multimodal / VLN calibration loaders
-    │   ├── model.py                      # load, calibrate, export
+    │   ├── model_loader.py               # load, calibrate, export
+    │   ├── load_quantized.py             # read a ModelOpt checkpoint back WITH its scales
+    │   ├── benchmark_accuracy.py         # pixel-goal L2 on held-out VLN episodes
     │   ├── prompt_builder.py             # VLN prompt — single source of truth
-    │   └── scripts/{00_fetch_calib_scenes,01_repackage,02_quantize}.sh
+    │   └── scripts/                      # 00_fetch_calib_scenes, 01_repackage, 02_quantize
     └── trt-edgellm/                      # quantized checkpoint -> engines -> verification
-        ├── README.md
+        ├── engine_runner.py              # direct-TensorRT LLM harness (hand-built 3D mRoPE)
         ├── export_traj_dit.py            # System 1 diffusion head -> ONNX -> BF16 engine
         ├── export_memory_block.py        # System 1 memory block -> ONNX -> BF16 engine
-        ├── engine_runner.py              # direct-TensorRT LLM harness (hand-built 3D mRoPE)
-        ├── internvla_compat.py           # patches needed to load System 1
-        ├── investigate_nvfp4.py          # why z_latents collapse under NVFP4
+        ├── internvla_compat.py           # the three patches needed to load System 1
+        ├── traj_dit_loader.py  memblock.py
+        ├── trt_torch.py                  # NVIDIA Apache-2.0 — header kept, not restamped
+        ├── engine_policy.py              # simulator adapter (untested: needs Habitat)
+        ├── investigate_nvfp4.py          # why NVFP4 breaks the System 1 bridge
         ├── verify/                       # 7 fidelity checks
-        ├── benchmark/                    # 3 latency/memory benchmarks
+        ├── benchmark/                    # 3 latency and memory benchmarks
         ├── deploy/run_eval_engine.py
-        └── scripts/{03_export_build_system2,04_export_system1,05_verify,06_benchmark}.sh
+        └── scripts/03_export_build_system2.sh
 
 ## The repackage step, and why it matters
 
