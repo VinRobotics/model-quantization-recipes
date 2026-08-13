@@ -127,37 +127,41 @@ engine and skip their in-script parity check with a message rather than failing;
 project) generates; it now fails with an explanation of the expected file shape rather than
 a bare `FileNotFoundError` at the first read.
 
-### NVFP4 — the 0.647 collapse is not weight quantization
+### NVFP4 — the collapse had two causes, and one of them was the compiler
 
-`trt-edgellm/investigate_nvfp4.py` was written to find out why NVFP4 keeps text fluent while
-the bridge collapses. Measured here, in PyTorch, weights only:
+`trt-edgellm/investigate_nvfp4.py` was written to explain why NVFP4 keeps text fluent while
+the bridge collapses. Three measurements, each isolating a different layer:
 
-| | weight rel-err | weight cos | **z_latents** |
-|---|---|---|---|
-| FP8 | 2.67 % | 0.999644 | **0.998020** |
-| NVFP4 | 9.45 % | 0.995534 | **0.987986** |
+| | weight rel-err | z_latents |
+|---|---|---|
+| FP8, weights only (PyTorch) | 2.67 % | 0.998020 |
+| **NVFP4, weights only (PyTorch)** | 9.45 % | **0.987986** |
+| **NVFP4 engine, with the CASK workaround** | — | **0.931005** |
+| NVFP4 engine, no workaround (source project's figure) | — | 0.647 |
 
-**NVFP4 weight quantization costs 0.988, not 0.647.** The weight error is 3.5x FP8's and the
-bridge degrades roughly in proportion — nothing anomalous. So whatever produces 0.647 is
-*not* the weights, and the two remaining candidates are the parts this measurement does not
-model: 4-bit **activation** quantization, and the engine itself.
+Reading them together:
 
-The engine hypothesis deserves weight here rather than dismissal. This platform has already
-produced one "quantization is broken" conclusion that turned out to be a TensorRT miscompile
-(`fc_h_fusion`, see below), and there is a second known one specific to NVFP4: CASK
-miscompiles when it fuses two or more epilogues into one NVFP4 GEMM at batch 1, fixed by
-`-cask_fusion:max_num_epilogues=1`. A 0.647 measured on an engine built without that
-workaround would be measuring the miscompile, not the format.
+* **Weight quantization is not the problem.** NVFP4 weights cost 0.988 — error 3.5x FP8's,
+  with the bridge degrading roughly in proportion. Nothing anomalous.
+* **Most of the old 0.647 was a compiler artifact.** Rebuilding the engine with
+  `-cask_fusion:max_num_epilogues=1` (which the fork applies automatically, gated to NVFP4
+  graphs at batch 1) moves it to 0.931. The build log confirms all three flags fired:
+  `-peep:fc_h_fusion=off -peep:match_dual_gemm=off -cask_fusion:max_num_epilogues=1`.
+* **A real gap remains.** 0.988 weights-only versus 0.931 through the engine is the part
+  this platform's PyTorch path cannot model: NVFP4 is W4A4, and 4-bit *activations* through
+  a 3584-wide hidden state in blocks of 16 are the remaining suspect.
 
-Channel analysis rules out the obvious remedy. At the final layer the top 128 channels by
-magnitude carry only 29.5 % of the squared error, and masking them *lowers* cosine rather
-than restoring it — the error is spread, not concentrated in outliers. So AWQ scaling or a
-targeted exclusion cannot recover the weight-side loss; that part is a capacity limit.
+The 0.647 figure is quoted from the source project and was not reproduced here; what is
+measured here is that the same checkpoint reaches 0.931 once the workaround is applied.
 
-**Where this leaves NVFP4:** experimental, and the next step is not more weight analysis. It
-is to rebuild the NVFP4 engine *with* the CASK workaround and re-measure z_latents end to
-end. If that lands near 0.988 the format is usable and the old number was a compiler
-artifact; if it stays at 0.647 the cause is activation quantization.
+Channel analysis rules out the obvious remedy for the weight-side loss: at the final layer
+the top 128 channels by magnitude carry only 29.5 % of the squared error, and masking them
+*lowers* cosine rather than restoring it. The error is spread, not concentrated in outliers,
+so AWQ scaling or a targeted exclusion has nothing to grip.
+
+**Verdict: NVFP4 stays experimental.** 0.931 is below the 0.99 gate, so it is not
+recommended for navigation — but it is far from the broken 0.647 it appeared to be, and the
+remaining gap now has a named suspect rather than a mystery.
 
 ### Earlier full-pipeline figures
 
