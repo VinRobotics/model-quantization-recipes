@@ -59,7 +59,27 @@ Habitat or InternUtopia plus MP3D scenes. Neither is installed here and neither 
 on a Jetson, so the published table (DualVLN: NE 4.05 / SR 64.3 / SPL 58.5 on VLN-CE R2R) is
 a literature reference point, not something this recipe reproduces.
 
-### Engine fidelity and latency
+### Engine size and latency
+
+Both engines built from the same repackaged System 2 and measured with `llm_bench` on
+Jetson Thor, batch 1:
+
+| | LLM engine | visual engine | prefill (1024 tok) | decode (pastKV 1024) |
+|---|---|---|---|---|
+| base FP16 (unquantized) | 15.0 GB | 1.36 GB | 196.22 ms | 86.16 ms |
+| FP8 (s1) | **7.62 GB** | 1.36 GB | **95.80 ms** | **37.35 ms** |
+| FP8 gain | 1.97x smaller | — | **2.05x faster** | **2.31x faster** |
+
+Both produce the same text on the same prompt, so this is a straight win: FP8 halves the
+engine and roughly doubles throughput while leaving the median waypoint error unchanged.
+
+The FP16 engine is only correct because the build applies
+`__LUNOWUD=-peep:fc_h_fusion=off`. The build log confirms it
+(`Using __LUNOWUD=-peep:fc_h_fusion=off -peep:match_dual_gemm=off`). Without it, TensorRT
+10.13 miscompiles Myelin's horizontal gate/up fusion on sm_110 and the engine emits fluent
+gibberish — see the note further down.
+
+### Earlier full-pipeline figures
 
 Measured on Jetson Thor, 12 held-out multi-image VLN steps:
 
