@@ -15,8 +15,8 @@ from memblock import MemBlock
 ACTIVE=os.environ.get("INTERNNAV_PATH", os.path.expanduser("~/InternNav"))
 CKPT=os.path.join(ACTIVE,"checkpoints/InternVLA-N1-DualVLN")
 IMG=os.path.expanduser("~/modelopt/TensorRT-Edge-LLM/examples/multimodal/pics/giant_panda.jpeg")
-TRAJDIT=os.path.join(os.environ.get("VLN_OPT_WORK",os.path.expanduser("~/vln-opt-work")), "onnx/system1_traj_dit_bf16.engine")
-MEM=os.path.join(os.environ.get("VLN_OPT_WORK",os.path.expanduser("~/vln-opt-work")), "onnx/system1_memory_bf16.engine")
+TRAJDIT=os.path.join(os.environ.get("WORK_DIR",os.path.expanduser("~/vln-opt-work")), "onnx/system1_traj_dit_bf16.engine")
+MEM=os.path.join(os.environ.get("WORK_DIR",os.path.expanduser("~/vln-opt-work")), "onnx/system1_memory_bf16.engine")
 SEED=12345
 
 
@@ -60,7 +60,7 @@ def main():
         dtype=z.dtype
         with torch.no_grad():
             traj_latents = m.cond_projector(z)                                  # [1,4,768]
-            # --- memory block qua ENGINE ---
+            # --- memory block through the engine ---
             xdp = images_dp.permute(0,1,4,2,3)
             xdp = ((xdp - rmean)/rstd).flatten(0,1)                              # [2,3,224,224]
             memory_tokens = out_of(mem_eng(images=xdp.float().contiguous()), "memory_tokens").to(dtype)  # [1,32,768]

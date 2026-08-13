@@ -5,13 +5,13 @@
 """
 import os, sys, time
 _R = os.path.dirname(os.path.dirname(os.path.abspath(__file__))); sys.path.insert(0, _R); sys.path.insert(0, os.path.join(_R, "lib"))
-sys.path.append("/usr/lib/python3.12/dist-packages")  # cv2 (system) cho depth_anything
+sys.path.append("/usr/lib/python3.12/dist-packages")  # cv2 (system) for depth_anything
 import numpy as np, torch
 from PIL import Image
 
 ACTIVE = os.environ.get("INTERNNAV_PATH", os.path.expanduser("~/InternNav"))
 CKPT = os.path.join(ACTIVE, "checkpoints/InternVLA-N1-DualVLN")
-REPKG = os.path.join(os.environ.get("VLN_OPT_WORK",os.path.expanduser("~/vln-opt-work")), "qwen25vl_system2")
+REPKG = os.path.join(os.environ.get("WORK_DIR",os.path.expanduser("~/vln-opt-work")), "qwen25vl_system2")
 IMG = os.path.expanduser("~/modelopt/TensorRT-Edge-LLM/examples/multimodal/pics/giant_panda.jpeg")
 
 
@@ -46,7 +46,7 @@ def main():
     t = torch.from_numpy(a).float()
     images_dp = torch.stack([t, t]).unsqueeze(0).to(dev)   # [1,2,224,224,3]
 
-    print("[3/3] Đo generate_traj (S1)\n" + "="*60)
+    print("[3/3] Time generate_traj (System 1)\n" + "="*60)
     with torch.no_grad():
         for ns in (32, 4, 1):
             def fn(ns=ns):

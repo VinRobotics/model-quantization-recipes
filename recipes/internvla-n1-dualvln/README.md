@@ -109,6 +109,24 @@ while the TensorRT Python bindings ship for Python 3.12. The exporters therefore
 engine and skip their in-script parity check with a message rather than failing; run
 `verify/verify_system1.py` under the 3.12 environment to check parity.
 
+### Verification inventory
+
+| Check | Needs | Status here |
+|---|---|---|
+| `verify_latents.py` | engine + bridge tensors | **run** — FP16 0.9995, FP8 0.9919 |
+| `verify_latents_vln.py` | engine + held-out VLN episodes | ready |
+| `verify_engine_policy.py` | engine + `INTERNNAV_PATH` | **run** — PASS 2/2 |
+| `verify_system1.py` | System-1 engines + `INTERNNAV_PATH` | ready |
+| `verify_accuracy.py` | engine + `INTERNNAV_PATH` + agent assets | ready |
+| `verify_pixelgoal_gt.py` | engine + held-out parquet ground truth | ready |
+| `verify_e2e_agent.py` | all engines + `INTERNNAV_PATH` | ready |
+| `benchmark/benchmark_system2.py` | a **user-supplied** golden manifest | needs input |
+| `benchmark/bench_system1.py`, `bench_memory.py` | `INTERNNAV_PATH` | ready |
+
+`benchmark_system2.py` needs a golden manifest that nothing in this recipe (or the source
+project) generates; it now fails with an explanation of the expected file shape rather than
+a bare `FileNotFoundError` at the first read.
+
 ### Earlier full-pipeline figures
 
 Measured on Jetson Thor, 12 held-out multi-image VLN steps:

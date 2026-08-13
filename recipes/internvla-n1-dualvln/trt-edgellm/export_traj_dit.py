@@ -11,8 +11,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 import torch
 from traj_dit_loader import load_traj_dit
 
-OUT = os.path.join(os.environ.get("VLN_OPT_WORK",os.path.expanduser("~/vln-opt-work")), "onnx/system1_traj_dit_async.onnx")
-ENG = os.path.join(os.environ.get("VLN_OPT_WORK",os.path.expanduser("~/vln-opt-work")), "onnx/system1_traj_dit_bf16.engine")
+OUT = os.path.join(os.environ.get("WORK_DIR",os.path.expanduser("~/vln-opt-work")), "onnx/system1_traj_dit_async.onnx")
+ENG = os.path.join(os.environ.get("WORK_DIR",os.path.expanduser("~/vln-opt-work")), "onnx/system1_traj_dit_bf16.engine")
 ZLEN = int(os.environ.get("ZLEN", "36"))  # observed z_latents length for the async path
 
 

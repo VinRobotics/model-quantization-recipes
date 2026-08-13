@@ -14,8 +14,8 @@ from PIL import Image
 ACTIVE=os.environ.get("INTERNNAV_PATH", os.path.expanduser("~/InternNav"))
 CKPT=os.path.join(ACTIVE,"checkpoints/InternVLA-N1-DualVLN")
 IMG=os.path.expanduser("~/modelopt/TensorRT-Edge-LLM/examples/multimodal/pics/giant_panda.jpeg")
-ONNX=os.path.join(os.environ.get("VLN_OPT_WORK",os.path.expanduser("~/vln-opt-work")), "onnx/system1_memory_bf16.onnx")
-ENG=os.path.join(os.environ.get("VLN_OPT_WORK",os.path.expanduser("~/vln-opt-work")), "onnx/system1_memory_bf16.engine")
+ONNX=os.path.join(os.environ.get("WORK_DIR",os.path.expanduser("~/vln-opt-work")), "onnx/system1_memory_bf16.onnx")
+ENG=os.path.join(os.environ.get("WORK_DIR",os.path.expanduser("~/vln-opt-work")), "onnx/system1_memory_bf16.engine")
 
 
 # MemBlock lives in memblock.py; defining it twice is how the two copies drift.

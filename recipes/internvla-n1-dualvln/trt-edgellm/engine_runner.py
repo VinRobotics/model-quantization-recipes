@@ -191,7 +191,7 @@ def main():
     print(f"  logits last cosine = {cos(eng_logits[0,0], ref_logits_last[0]):.6f} "
           f"| argmax eng={ea!r} ref={ra!r} match={ea==ra}")
 
-    print("[5/5] z_latents (cond_projector GỐC) engine vs reference")
+    print("[5/5] z_latents (the original cond_projector) engine vs reference")
     from safetensors import safe_open
     idx = json.load(open(os.path.join(CKPT, "model.safetensors.index.json")))["weight_map"]
     cp = {}

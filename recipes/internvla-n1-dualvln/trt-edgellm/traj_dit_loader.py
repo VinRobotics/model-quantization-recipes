@@ -24,7 +24,7 @@ sys.path.insert(0, os.environ.get("INTERNNAV_PATH", os.path.expanduser("~/Intern
 MODEL = os.environ.get("INTERNVLA_CKPT", os.path.join(
     os.environ.get("INTERNNAV_PATH", os.path.expanduser("~/InternNav")),
     "checkpoints/InternVLA-N1-DualVLN"))
-OUT = os.path.join(os.environ.get("VLN_OPT_WORK", os.path.expanduser("~/vln-opt-work")),
+OUT = os.path.join(os.environ.get("WORK_DIR", os.path.expanduser("~/vln-opt-work")),
                    "onnx/system1_traj_dit.onnx")
 
 
