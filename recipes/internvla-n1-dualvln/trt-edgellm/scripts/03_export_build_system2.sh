@@ -110,16 +110,24 @@ mkdir -p "$ENGINE_DIR/llm"
     --maxInputLen "$MAX_INPUT_LEN" \
     --maxKVCacheCapacity "$MAX_KV_CACHE"
 
+# llm_bench reads its engine configuration from base_config.json, while llm_build writes
+# config.json. Same content, different name; without this copy the benchmark cannot open
+# the engine it was just handed.
+cp "$ENGINE_DIR/llm/config.json" "$ENGINE_DIR/llm/base_config.json"
+
 if [[ $SKIP_VISUAL -eq 0 && -d "$ONNX_DIR/visual" ]]; then
     echo
     echo "[3/3] Building the visual engine..."
     [[ -f "$VISUAL_BUILD" ]] || { echo "[ERROR] not found: $VISUAL_BUILD" >&2; exit 1; }
-    mkdir -p "$ENGINE_DIR/visual"
-    # A VLN prompt carries 9-10 frames and roughly 1764 image tokens. The
-    # single-image demo default of 512 cannot hold one.
+    # visual_build appends its own "visual" component directory under --engineDir, so
+    # pass the parent: giving it $ENGINE_DIR/visual yields $ENGINE_DIR/visual/visual and
+    # every consumer that expects $ENGINE_DIR/visual/visual.engine then misses it.
+    #
+    # A VLN prompt carries 9-10 frames and roughly 1764 image tokens. The single-image
+    # demo default of 512 cannot hold one.
     "$VISUAL_BUILD" \
         --onnxDir "$ONNX_DIR/visual" \
-        --engineDir "$ENGINE_DIR/visual" \
+        --engineDir "$ENGINE_DIR" \
         --minImageTokens 4 \
         --maxImageTokens 4096 \
         --maxImageTokensPerImage 1024
