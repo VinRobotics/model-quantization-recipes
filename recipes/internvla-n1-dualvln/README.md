@@ -193,6 +193,30 @@ the top 128 channels by magnitude carry only 29.5 % of the squared error, and ma
 *lowers* cosine rather than restoring it. The error is spread, not concentrated in outliers,
 so AWQ scaling or a targeted exclusion has nothing to grip.
 
+**No post-training method closes the weight-side gap.** All three NVFP4 presets land in the
+same place, measured end to end against the unquantized reference:
+
+| Preset | z_latents (weights) | note |
+|---|---|---|
+| `nvfp4_default` | 0.987986 | baseline |
+| `nvfp4_awq_full` | 0.986293 | equal within noise |
+| `nvfp4_local_hessian` | 0.987986 | **byte-identical to default** |
+
+`nvfp4_local_hessian` is a no-op on this model. Its preset genuinely differs
+(`algorithm={'method': 'local_hessian', 'fp8_scale_sweep': True}` against `'max'`) and the
+run exits 0, but the exported weights match `nvfp4_default` bit for bit — 0 of 6,422,528
+bytes differ, scales included. Two quantization runs with different algorithms cannot
+produce identical output unless the algorithm did not run. It remains selectable, so a user
+would reasonably believe they had tried it.
+
+AWQ does run — its weights genuinely differ — but does not help, which is what the channel
+analysis predicted: the error is spread rather than carried by outliers, so per-channel
+rescaling has nothing to grip.
+
+That leaves quantization-aware training as the only remaining lever, since the gap between
+0.988 (weights) and 0.931 (engine) is 4-bit activations and no post-training method reaches
+those. See `quantize/qat.py`.
+
 **Verdict: NVFP4 stays experimental.** 0.931 is below the 0.99 gate, so it is not
 recommended for navigation — but it is far from the broken 0.647 it appeared to be, and the
 remaining gap now has a named suspect rather than a mystery.
