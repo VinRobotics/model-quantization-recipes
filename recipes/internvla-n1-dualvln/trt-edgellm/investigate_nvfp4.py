@@ -66,6 +66,17 @@ def rel_err(ref: torch.Tensor, other: torch.Tensor) -> float:
     return float((other.double() - ref).norm() / ref.norm())
 
 
+def _has_awq_scales(model_path: str) -> bool:
+    """True if the checkpoint carries AWQ pre-quant scales."""
+    import glob
+    from safetensors import safe_open
+    for shard in sorted(glob.glob(os.path.join(model_path, "*.safetensors"))):
+        with safe_open(shard, framework="pt") as f:
+            if any(k.endswith("pre_quant_scale") for k in f.keys()):
+                return True
+    return False
+
+
 def stage_weights(args, report: dict) -> None:
     """Compare per-projection weight error, NVFP4 vs FP8, against the unquantized weights."""
     from load_quantized import dequantize_state_dict
@@ -87,6 +98,16 @@ def stage_weights(args, report: dict) -> None:
     rows = {}
     for label, path in (("fp8", args.fp8_ckpt), ("nvfp4", args.nvfp4_ckpt)):
         if not path:
+            continue
+        # AWQ redistributes scale between each layernorm and the projections that read it
+        # (measured on this checkpoint: layernorm weights move by 0.012x to 91x while
+        # plain NVFP4 leaves them at exactly 1.0). Comparing its linear weights against
+        # the reference's linear weights is therefore meaningless -- the invariant is the
+        # composition, not either factor. Only the end-to-end bridge stage is valid there.
+        if _has_awq_scales(path):
+            print(f"  {label:6s} [skip] AWQ checkpoint: per-layer weight comparison is not "
+                  f"meaningful, see the bridge stage")
+            rows[label] = {"skipped": "awq_rescales_layernorms"}
             continue
         state = dequantize_state_dict(path)
         errs, coss = [], []

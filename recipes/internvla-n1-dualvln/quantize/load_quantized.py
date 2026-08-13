@@ -91,19 +91,33 @@ def dequantize_state_dict(model_path: str,
         with safe_open(shard, framework="pt") as f:
             for key in f.keys():
                 tensor = f.get_tensor(key)
-                if key.endswith(("weight_scale", "input_scale", "weight_scale_2")):
+                if key.endswith(("weight_scale", "input_scale", "weight_scale_2",
+                                 "pre_quant_scale")):
                     scales[key] = tensor
                 else:
                     raw[key] = tensor
 
     out: dict[str, torch.Tensor] = {}
     n_dequant = 0
+    n_awq = 0
     for key, tensor in raw.items():
         # NVFP4: packed uint8 plus a block scale and a global scale.
         block = scales.get(key + "_scale")
         glob = scales.get(key + "_scale_2")
         if tensor.dtype == torch.uint8 and block is not None and glob is not None:
-            out[key] = unpack_nvfp4(tensor, block, glob, dtype)
+            w = unpack_nvfp4(tensor, block, glob, torch.float32)
+            # AWQ-lite scales the activations by a per-input-channel s and stores the
+            # weight pre-divided by it, so that y = (x * s) @ (W / s) reproduces x @ W.
+            # A plain matmul needs s multiplied back in. Verified empirically on this
+            # checkpoint against the unquantized weights, since the direction is easy to
+            # get backwards: multiplying gives cosine 0.9898, leaving it alone 0.9606,
+            # dividing 0.8089. Skipping this entirely reads as ~190% relative error and
+            # looks like AWQ being catastrophically bad rather than loaded wrong.
+            pqs = scales.get(key.replace(".weight", ".pre_quant_scale"))
+            if pqs is not None:
+                w = w * pqs.to(torch.float32)
+                n_awq += 1
+            out[key] = w.to(dtype)
             n_dequant += 1
             continue
         scale = scales.get(key + "_scale")
@@ -116,7 +130,8 @@ def dequantize_state_dict(model_path: str,
         else:
             out[key] = tensor.to(dtype) if tensor.is_floating_point() else tensor
 
-    print(f"      [load] dequantized {n_dequant} tensors, "
+    awq_note = f", {n_awq} with an AWQ pre-quant scale folded out" if n_awq else ""
+    print(f"      [load] dequantized {n_dequant} tensors{awq_note}, "
           f"{len(out) - n_dequant} passed through unchanged")
     return out
 
