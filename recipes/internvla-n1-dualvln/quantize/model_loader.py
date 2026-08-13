@@ -13,7 +13,6 @@ and saves the intermediate copy, but it puts a gated third-party repository -- a
 three monkeypatches needed to load it -- on the critical path of every quantization run.
 """
 
-import json
 import os
 import shutil
 from typing import Optional

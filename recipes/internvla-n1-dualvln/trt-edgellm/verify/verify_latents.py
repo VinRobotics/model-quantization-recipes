@@ -4,12 +4,16 @@
 """Verify System 2 numeric fidelity: z_latents cosine of the FP8 LLM engine vs the
 PyTorch reference, using the real latent-query bridge path.
 """
-import os, sys, json
-_R = os.path.dirname(os.path.dirname(os.path.abspath(__file__))); sys.path.insert(0, _R); sys.path.insert(0, _R)
-import torch
-from PIL import Image
-from engine_runner import (REPKG, ENGINE, CKPT, build_mrope_table, run_engine,
-                                 cos, per_tok_cos)
+import os
+import sys
+import json
+_R = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, _R)
+sys.path.insert(0, _R)
+import torch  # noqa: E402
+from PIL import Image  # noqa: E402
+from engine_runner import (REPKG, ENGINE, CKPT, build_mrope_table, run_engine,  # noqa: E402
+                           cos, per_tok_cos)
 
 TRAJ_TOKEN_INDEX = 151667
 IMAGE_TOKEN_INDEX = 151655
@@ -117,12 +121,12 @@ def main():
     from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration
     print(f"[1/6] Load repackage + processor | engine={os.path.basename(ENGINE)}")
     model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-        REPKG, torch_dtype=torch.bfloat16, # flash-attn is not available on Jetson; sdpa is the supported path and
+        REPKG, torch_dtype=torch.bfloat16,  # flash-attn is not available on Jetson; sdpa is the supported path and
         # is what the deployed agent uses too.
         attn_implementation=os.environ.get("ATTN_IMPL", "sdpa"),
         low_cpu_mem_usage=True).to(dev).eval()
     proc = AutoProcessor.from_pretrained(REPKG, trust_remote_code=True,
-                                         min_pixels=128*28*28, max_pixels=1024*28*28)
+                                         min_pixels=128 * 28 * 28, max_pixels=1024 * 28 * 28)
     inner = model.model                       # Qwen2_5_VLModel (takes inputs_embeds)
     lm = inner.language_model if hasattr(inner, "language_model") else inner
     final_norm = lm.norm
@@ -173,6 +177,7 @@ def main():
         eng_post = final_norm(eng_pre.to(torch.bfloat16)).float()
 
     print("[6/6] Compare z_latents (System1 traj_dit input)\n" + "=" * 60)
+
     def cond_project(x):
         x = torch.nn.functional.linear(x, cp["0.weight"], cp.get("0.bias"))
         x = torch.nn.functional.gelu(x)

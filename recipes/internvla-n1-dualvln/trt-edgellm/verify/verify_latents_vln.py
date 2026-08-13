@@ -14,6 +14,7 @@ Select the engine with ENGINE_PATH; select the calibration/probe data with
 VLN_CALIB_DATA. Uses a fixed seed so every engine sees identical inputs.
 """
 import os
+import json
 import sys
 
 _R = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -21,9 +22,9 @@ sys.path.insert(0, _R)
 sys.path.insert(0, _R)
 sys.path.insert(0, os.path.join(_R, "build", "quantize"))
 
-import torch
+import torch  # noqa: E402
 
-from engine_runner import (REPKG, ENGINE, CKPT, build_mrope_table, run_engine,
+from engine_runner import (REPKG, ENGINE, CKPT, build_mrope_table, run_engine,  # noqa: E402
                            cos, per_tok_cos)
 
 TRAJ_TOKEN_INDEX = 151667
@@ -136,7 +137,7 @@ def main():
 
     print(f"[1/4] Load repackage + processor | engine={os.path.basename(ENGINE)}")
     model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-        REPKG, torch_dtype=torch.bfloat16, # flash-attn is not available on Jetson; sdpa is the supported path and
+        REPKG, torch_dtype=torch.bfloat16,  # flash-attn is not available on Jetson; sdpa is the supported path and
         # is what the deployed agent uses too.
         attn_implementation=os.environ.get("ATTN_IMPL", "sdpa"),
         low_cpu_mem_usage=True).to(dev).eval()
@@ -196,7 +197,10 @@ def main():
         hpo = per_tok_cos(eng_post, ref_post)
         zc = per_tok_cos(z_eng, z_ref)
         zf = cos(z_eng, z_ref)
-        hid_pre.append(hp); hid_post.append(hpo); zc_list.append(zc); zflat_list.append(zf)
+        hid_pre.append(hp)
+        hid_post.append(hpo)
+        zc_list.append(zc)
+        zflat_list.append(zf)
         print(f"  #{bi:2d} imgs={grid.shape[0]:2d} seq={input_ids.shape[1]:4d} "
               f"| hidPRE={hp:.5f} hidPOST={hpo:.5f} z={zc:.5f}")
 

@@ -8,13 +8,18 @@ reference `position_ids` (per-token, merged by mrope_section (16,24,24), layout 
 binds torch GPU buffers to the TensorRT context, and returns (logits, hidden_states) for a
 single prefill. Used by the verification scripts. Select an engine via the ENGINE_PATH env var.
 """
-import os, sys, ctypes, json
+import os
+import sys
+import ctypes
+import json
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _ROOT)
 # TensorRT ships with JetPack outside the venv.
 sys.path.append(os.environ.get("SYSTEM_SITE", "/usr/lib/python3.12/dist-packages"))
-import numpy as np, tensorrt as trt, torch
-from PIL import Image
+import tensorrt as trt  # noqa: E402
+import torch  # noqa: E402
+from PIL import Image  # noqa: E402
+
 
 def _env(name, default):
     return os.path.expanduser(os.environ.get(name, default))
@@ -31,7 +36,7 @@ PLUGIN = _env("EDGELLM_PLUGIN_PATH",
 CKPT = _env("INTERNVLA_CKPT", REPKG)
 IMAGE = os.path.expanduser(os.environ.get(
     "IMAGE_PATH", os.path.join(TRT_EDGELLM_DIR,
-                 "examples/multimodal/pics/giant_panda.jpeg")))
+                               "examples/multimodal/pics/giant_panda.jpeg")))
 
 # Qwen2.5-VL-7B / InternVLA-N1 System 2 geometry. Inlined rather than imported: this
 # repository has no shared-library convention, each recipe stands alone.
@@ -81,16 +86,20 @@ def build_mrope_table(position_ids, device):
 def load_engine():
     if "eng" not in _ENG:
         ctypes.CDLL(PLUGIN, mode=ctypes.RTLD_GLOBAL)
-        lg = trt.Logger(trt.Logger.ERROR); trt.init_libnvinfer_plugins(lg, "")
+        lg = trt.Logger(trt.Logger.ERROR)
+        trt.init_libnvinfer_plugins(lg, "")
         rt = trt.Runtime(lg)
         with open(ENGINE, "rb") as f:
-            _ENG["eng"] = rt.deserialize_cuda_engine(f.read()); _ENG["rt"] = rt
+            _ENG["eng"] = rt.deserialize_cuda_engine(f.read())
+            _ENG["rt"] = rt
     return _ENG["eng"]
 
 
 def run_engine(embeds_half, rope_table):
-    S = embeds_half.shape[1]; dev = embeds_half.device
-    eng = load_engine(); ctx = eng.create_execution_context()
+    S = embeds_half.shape[1]
+    dev = embeds_half.device
+    eng = load_engine()
+    ctx = eng.create_execution_context()
     ctx.set_optimization_profile_async(0, torch.cuda.current_stream().cuda_stream)
     context_lengths = torch.tensor([S], dtype=torch.int32, device=dev)
     kvcache_start = torch.zeros(1, dtype=torch.int32, device=dev)
@@ -117,26 +126,30 @@ def run_engine(embeds_half, rope_table):
             continue
         if n.startswith("present_key_values_"):
             li = int(n.rsplit("_", 1)[1])
-            ctx.set_tensor_address(n, kv_cache[li].data_ptr()); continue
+            ctx.set_tensor_address(n, kv_cache[li].data_ptr())
+            continue
         shp = tuple(int(d) for d in ctx.get_tensor_shape(n))
         shp = tuple(S if d < 0 else d for d in shp)
         t = torch.empty(shp, dtype=TRT2TORCH[eng.get_tensor_dtype(n)], device=dev)
-        outs[n] = t; ctx.set_tensor_address(n, t.data_ptr())
+        outs[n] = t
+        ctx.set_tensor_address(n, t.data_ptr())
     outs["_kv"] = kv_cache
     ok = ctx.execute_async_v3(torch.cuda.current_stream().cuda_stream)
-    torch.cuda.synchronize(); assert ok
+    torch.cuda.synchronize()
+    assert ok
     return outs["logits"], outs["hidden_states"]
 
 
 def main():
-    dev = "cuda"; torch.manual_seed(0)
+    dev = "cuda"
+    torch.manual_seed(0)
     from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration
     print(f"[1/5] Load repackage (transformers) | engine={os.path.basename(ENGINE)}")
     model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
         REPKG, torch_dtype=torch.bfloat16, attn_implementation="flash_attention_2",
         low_cpu_mem_usage=True).to(dev).eval()
     proc = AutoProcessor.from_pretrained(REPKG, trust_remote_code=True,
-                                         min_pixels=128*28*28, max_pixels=1024*28*28)
+                                         min_pixels=128 * 28 * 28, max_pixels=1024 * 28 * 28)
     backbone = model.model.language_model if hasattr(model.model, "language_model") else model.model
     final_norm = backbone.norm
 
@@ -151,26 +164,32 @@ def main():
 
     # hook inner LM to capture the reference inputs_embeds + position_ids
     cap = {}
+
     def pre_hook(mod, args, kwargs):
         cap["inputs_embeds"] = kwargs.get("inputs_embeds")
         cap["position_ids"] = kwargs.get("position_ids")
     h1 = backbone.register_forward_pre_hook(pre_hook, with_kwargs=True)
+
     def norm_hook(mod, i, o):
-        cap["pre"] = i[0].detach(); cap["post"] = o.detach()
+        cap["pre"] = i[0].detach()
+        cap["post"] = o.detach()
     h2 = final_norm.register_forward_hook(norm_hook)
 
     print("[2/5] Reference forward (WITH image)")
     with torch.no_grad():
         ref_out = model(**inp, use_cache=False)
-    h1.remove(); h2.remove()
-    embeds = cap["inputs_embeds"]; pos = cap["position_ids"]
+    h1.remove()
+    h2.remove()
+    embeds = cap["inputs_embeds"]
+    pos = cap["position_ids"]
     if embeds is None:
         # fallback: build inputs_embeds externally
         raise RuntimeError("inputs_embeds not captured - wrong hook target")
     print(f"      captured inputs_embeds {tuple(embeds.shape)} position_ids {tuple(pos.shape)}")
     print(f"      position_ids axis-range T[{pos[0].min()}..{pos[0].max()}] "
           f"H[{pos[1].min()}..{pos[1].max()}] W[{pos[2].min()}..{pos[2].max()}]")
-    ref_pre = cap["pre"].float(); ref_post = cap["post"].float()
+    ref_pre = cap["pre"].float()
+    ref_post = cap["post"].float()
     ref_logits_last = ref_out.logits[:, -1, :].float()
 
     print("[3/5] Build merged 3D mRoPE + run engine")
@@ -199,6 +218,7 @@ def main():
         if k.startswith("model.cond_projector"):
             with safe_open(os.path.join(CKPT, idx[k]), framework="pt") as f:
                 cp[k.replace("model.cond_projector.", "")] = f.get_tensor(k).float().to(dev)
+
     def cond_project(x):
         x = torch.nn.functional.linear(x, cp["0.weight"], cp.get("0.bias"))
         x = torch.nn.functional.gelu(x)

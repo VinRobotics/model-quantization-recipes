@@ -24,8 +24,8 @@ _R = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _R)
 sys.path.insert(0, os.path.join(_R, "lib"))
 
-import numpy as np
-from PIL import Image
+import numpy as np  # noqa: E402
+from PIL import Image  # noqa: E402
 # prompt_builder is the single source of truth for the VLN prompt and lives in the
 # quantize path, so calibration and verification cannot drift apart. Walk up to the
 # recipe root rather than counting directory levels -- these scripts sit at two
@@ -34,7 +34,7 @@ _d = os.path.dirname(os.path.abspath(__file__))
 while _d != "/" and not os.path.isdir(os.path.join(_d, "quantize")):
     _d = os.path.dirname(_d)
 sys.path.insert(0, os.path.join(_d, "quantize"))
-import prompt_builder as pb
+import prompt_builder as pb  # noqa: E402
 
 TRT = os.path.expanduser(os.environ.get("TRT_EDGE_LLM", "~/modelopt/TensorRT-Edge-LLM"))
 LLM_DIR = os.path.expanduser(os.environ.get(
@@ -42,7 +42,7 @@ LLM_DIR = os.path.expanduser(os.environ.get(
 VIS_DIR = os.path.expanduser(os.environ.get(
     "VLN_VIS_ENGINE_DIR",
     os.path.join(os.environ.get("ENGINE_DIR",
-        os.path.expanduser("~/vln-opt-work/engines")), "s1_fp8/visual")))
+                                os.path.expanduser("~/vln-opt-work/engines")), "s1_fp8/visual")))
 REPKG = os.path.expanduser(os.environ.get("REPKG", "~/vln-opt-work/repro/qwen25vl_system2"))
 DATA = os.path.expanduser(os.environ.get("VLN_CALIB_DATA", "~/vln-opt-work/probe_heldout"))
 env = dict(os.environ, EDGELLM_PLUGIN_PATH=os.path.join(TRT, "build/libNvInfer_edgellm_plugin.so"))
@@ -69,7 +69,7 @@ def one_lookdown_messages(tmp):
     messages + save images, using the same prompt_builder the policy uses."""
     meta = sorted(glob.glob(os.path.join(DATA, "**", "meta", "episodes.jsonl"), recursive=True))[0]
     scene = os.path.dirname(os.path.dirname(meta))
-    eps = [json.loads(l) for l in open(meta) if l.strip()]
+    eps = [json.loads(l) for l in open(meta) if l.strip()]  # noqa: E741
     ep = [e for e in eps if e.get("length", 0) > 20 and e.get("tasks")][0]
     t = ep["length"] // 2
     lvl = f"{scene}/videos/chunk-000/observation.images.rgb.125cm_0deg"
@@ -87,14 +87,16 @@ def one_lookdown_messages(tmp):
                 # the real policy resizes to (resize_w, resize_h)=384 before inference
                 Image.open(srcs[k]).convert("RGB").resize(
                     (pb.RESIZE_W, pb.RESIZE_H)).save(d)
-                it["image"] = d; k += 1
+                it["image"] = d
+                k += 1
                 paths.append(d)
     # to llm_inference messages (images already file paths)
     return conv
 
 
 def run_llm_inference(messages, tmp):
-    in_json = os.path.join(tmp, "in.json"); out_json = os.path.join(tmp, "out.json")
+    in_json = os.path.join(tmp, "in.json")
+    out_json = os.path.join(tmp, "out.json")
     json.dump({"batch_size": 1, "temperature": 0.0, "top_p": 1.0, "top_k": 1,
                "max_generate_length": 32, "requests": [{"messages": messages}]}, open(in_json, "w"))
     subprocess.run([os.path.join(TRT, "build/examples/llm/llm_inference"),

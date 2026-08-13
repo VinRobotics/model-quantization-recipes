@@ -74,7 +74,6 @@ class EngineInternVLAN1Net(InternVLAN1Net):
         input_ids = kwargs.get("input_ids")
         if input_ids is None and args:
             input_ids = args[0]
-        prompt_len = int(input_ids.shape[1])
         dev = input_ids.device
 
         tmp = tempfile.mkdtemp(prefix="engpol_")
@@ -86,7 +85,8 @@ class EngineInternVLAN1Net(InternVLAN1Net):
                 content = []
                 for it in turn["content"]:
                     if it["type"] == "image":
-                        fp = os.path.join(tmp, f"img_{k}.png"); k += 1
+                        fp = os.path.join(tmp, f"img_{k}.png")
+                        k += 1
                         it["image"].save(fp)
                         content.append({"type": "image", "image": fp})
                     else:
@@ -94,7 +94,8 @@ class EngineInternVLAN1Net(InternVLAN1Net):
                 messages.append({"role": turn["role"], "content": content})
 
             max_new = int(kwargs.get("max_new_tokens", 64) or 64)
-            in_json = os.path.join(tmp, "in.json"); out_json = os.path.join(tmp, "out.json")
+            in_json = os.path.join(tmp, "in.json")
+            out_json = os.path.join(tmp, "out.json")
             json.dump({"batch_size": 1, "temperature": 0.0, "top_p": 1.0, "top_k": 1,
                        "max_generate_length": max_new,
                        "requests": [{"messages": messages}]}, open(in_json, "w"))

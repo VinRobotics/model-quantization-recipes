@@ -32,8 +32,8 @@ _R = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _R)
 sys.path.insert(0, os.path.join(_R, "lib"))
 
-import numpy as np
-from PIL import Image
+import numpy as np  # noqa: E402
+from PIL import Image  # noqa: E402
 # prompt_builder is the single source of truth for the VLN prompt and lives in the
 # quantize path, so calibration and verification cannot drift apart. Walk up to the
 # recipe root rather than counting directory levels -- these scripts sit at two
@@ -42,14 +42,14 @@ _d = os.path.dirname(os.path.abspath(__file__))
 while _d != "/" and not os.path.isdir(os.path.join(_d, "quantize")):
     _d = os.path.dirname(_d)
 sys.path.insert(0, os.path.join(_d, "quantize"))
-import prompt_builder as pb
+import prompt_builder as pb  # noqa: E402
 
 TRT = os.path.expanduser(os.environ.get("TRT_EDGE_LLM", "~/modelopt/TensorRT-Edge-LLM"))
 REPKG = os.path.expanduser(os.environ.get("REPKG", "~/vln-opt-work/repro/qwen25vl_system2"))
 VIS = os.path.expanduser(os.environ.get(
     "VIS_ENG",
     os.path.join(os.environ.get("ENGINE_DIR",
-        os.path.expanduser("~/vln-opt-work/engines")), "s1_fp8/visual")))
+                                os.path.expanduser("~/vln-opt-work/engines")), "s1_fp8/visual")))
 DATA = os.path.expanduser(os.environ.get("VLN_CALIB_DATA", "~/vln-opt-work/probe_heldout"))
 # Look-down config: level history (0deg) + tilted goal view. GT lives at the tilted pitch.
 LEVEL_KEY = "observation.images.rgb.125cm_0deg"
@@ -74,7 +74,7 @@ def collect_goal_frames():
     for meta in glob.glob(os.path.join(DATA, "**", "meta", "episodes.jsonl"), recursive=True):
         scene = os.path.dirname(os.path.dirname(meta))
         eps = {e["episode_index"]: e for e in
-               (json.loads(l) for l in open(meta) if l.strip())}
+               (json.loads(l) for l in open(meta) if l.strip())}  # noqa: E741
         for pq in sorted(glob.glob(os.path.join(scene, "data", "chunk-000", "*.parquet"))):
             df = pd.read_parquet(pq)
             ep_idx = int(df["episode_index"].iloc[0])
@@ -116,7 +116,8 @@ def pred_uv(text):
 def run_engine(conv, tmp):
     js = {"batch_size": 1, "temperature": 0.0, "top_p": 1.0, "top_k": 1,
           "max_generate_length": 16, "requests": [{"messages": conv}]}
-    inp = os.path.join(tmp, "in.json"); out = os.path.join(tmp, "out.json")
+    inp = os.path.join(tmp, "in.json")
+    out = os.path.join(tmp, "out.json")
     json.dump(js, open(inp, "w"))
     subprocess.run([f"{TRT}/build/examples/llm/llm_inference",
                     "--engineDir", os.path.dirname(ENGINE), "--multimodalEngineDir", VIS,
@@ -145,7 +146,7 @@ def main():
         REPKG, torch_dtype=torch.bfloat16, attn_implementation="flash_attention_2",
         low_cpu_mem_usage=True).to("cuda").eval()
     proc = AutoProcessor.from_pretrained(REPKG, trust_remote_code=True,
-                                         min_pixels=128*28*28, max_pixels=1024*28*28)
+                                         min_pixels=128 * 28 * 28, max_pixels=1024 * 28 * 28)
 
     pt_l2, eng_l2 = [], []
     tmp = tempfile.mkdtemp(prefix="pgoal_")
@@ -187,13 +188,15 @@ def main():
                 eng_l2.append(np.hypot(euv[0] - gu, euv[1] - gv))
 
     def ci(a, stat=np.median, n=1000, seed=0):
-        a = np.asarray(a); rng = np.random.default_rng(seed)
+        a = np.asarray(a)
+        rng = np.random.default_rng(seed)
         bs = [stat(rng.choice(a, len(a), replace=True)) for _ in range(n)]
         return np.percentile(bs, 2.5), np.percentile(bs, 97.5)
 
     def report(a, tag):
         a = np.asarray(a)
-        mlo, mhi = ci(a, np.median); alo, ahi = ci(a, np.mean)
+        mlo, mhi = ci(a, np.median)
+        alo, ahi = ci(a, np.mean)
         print(f"  {tag:13}: n={len(a)}  median={np.median(a):.1f} [{mlo:.1f},{mhi:.1f}]  "
               f"mean={a.mean():.1f} [{alo:.1f},{ahi:.1f}]  max={a.max():.0f}")
 
