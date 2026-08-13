@@ -79,6 +79,21 @@ The FP16 engine is only correct because the build applies
 10.13 miscompiles Myelin's horizontal gate/up fusion on sm_110 and the engine emits fluent
 gibberish — see the note further down.
 
+### Bridge fidelity — z_latents
+
+`trt-edgellm/verify/verify_latents.py` reconstructs the System 2 -> System 1 bridge against
+a PyTorch BF16 reference: embed, scatter image embeddings, append the 4 trajectory tokens,
+run the engine with hand-built 3D mRoPE, take the last-layer hidden states, then apply the
+host-side norm and `cond_projector`.
+
+| Engine | hidden pre-norm | hidden post-norm | **z_latents** | rel-L2 |
+|---|---|---|---|---|
+| base FP16 | 0.999843 | 0.999123 | **0.999471** | 0.0293 |
+| FP8 (s1) | 0.997793 | 0.987343 | **0.991861** | 0.1023 |
+
+Both pass the > 0.99 gate. This is the check that NVFP4 fails (0.647), and it is the reason
+it ships as experimental: text stays fluent while the waypoint bridge collapses.
+
 ### Earlier full-pipeline figures
 
 Measured on Jetson Thor, 12 held-out multi-image VLN steps:
