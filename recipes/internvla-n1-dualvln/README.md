@@ -94,6 +94,21 @@ host-side norm and `cond_projector`.
 Both pass the > 0.99 gate. This is the check that NVFP4 fails (0.647), and it is the reason
 it ships as experimental: text stays fluent while the waypoint bridge collapses.
 
+### System 1 engines (BF16, not quantized)
+
+| Engine | ONNX | engine | I/O |
+|---|---|---|---|
+| traj_dit | 134 MB | **72 MB** | `x`, `timestep`, `z_latents` -> `output` |
+| memory block | 200 MB | **104 MB** | `images` -> `memory_tokens` |
+
+Both are BF16 via `trtexec` and deliberately stay unquantized: they are small enough that
+quantizing them buys nothing, and the diffusion head is the part least tolerant of it.
+
+Note the environment split. Exporting System 1 needs transformers 4.51.3 (Python 3.10 here),
+while the TensorRT Python bindings ship for Python 3.12. The exporters therefore build the
+engine and skip their in-script parity check with a message rather than failing; run
+`verify/verify_system1.py` under the 3.12 environment to check parity.
+
 ### Earlier full-pipeline figures
 
 Measured on Jetson Thor, 12 held-out multi-image VLN steps:

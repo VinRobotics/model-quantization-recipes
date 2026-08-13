@@ -78,7 +78,18 @@ def main():
         print("  STDERR:", r.stderr[-600:]); return 1
 
     print("[6/6] Parity + latency (TRT vs base)")
-    from trt_torch import Engine
+    # The parity check needs the TensorRT Python bindings, which JetPack ships for
+    # Python 3.12 only -- while this export needs transformers 4.51, which lives in the
+    # 3.10 environment. The engine is already built and valid at this point, so a missing
+    # binding must not turn a successful build into a failure. Run
+    # verify/verify_system1.py under the 3.12 environment to check parity.
+    try:
+        from trt_torch import Engine
+    except ImportError as exc:
+        print(f"\n[skip] parity check unavailable in this interpreter: {exc}")
+        print("       The engine was built successfully. To check it, run")
+        print("       verify/verify_system1.py under the TensorRT (Python 3.12) environment.")
+        return 0
     eng=Engine(ENG)
     out=eng(images=x.float().contiguous())
     out=(out.get("memory_tokens") if isinstance(out,dict) else out).float()
