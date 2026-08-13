@@ -141,6 +141,33 @@ def build_batch(sample: dict, processor, device: str):
     return {k: (v.to(device) if torch.is_tensor(v) else v) for k, v in batch.items()}
 
 
+def freeze_all_but_last_layers(model, n_last: int) -> int:
+    """Freeze everything except the final ``n_last`` decoder layers.
+
+    Returns the number of frozen parameters. Full fine-tuning does not fit: at 8.29B
+    parameters, weights plus gradients plus AdamW moments come to about 100 GB before any
+    activation memory, against a 122 GB pool shared with the host. Restricting to the last
+    layers is also where the quantity being repaired lives -- the System 1 bridge reads the
+    last layer's hidden states.
+    """
+    layers = None
+    for owner in (getattr(model, "model", None), model):
+        inner = getattr(owner, "language_model", owner)
+        if inner is not None and hasattr(inner, "layers"):
+            layers = inner.layers
+            break
+    if layers is None:
+        raise AttributeError("could not locate the decoder layer list on this model")
+
+    keep = {id(p) for layer in layers[-n_last:] for p in layer.parameters()}
+    frozen = 0
+    for param in model.parameters():
+        if id(param) not in keep:
+            param.requires_grad_(False)
+            frozen += param.numel()
+    return frozen
+
+
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -156,6 +183,14 @@ def parse_args() -> argparse.Namespace:
                    help="Small on purpose: QAT adapts to quantization noise, it does not "
                         "re-learn the task, and a large step undoes the pretrained planner")
     p.add_argument("--grad_accum", type=int, default=4)
+    p.add_argument("--train_last_n_layers", type=int, default=4,
+                   help="Train only the last N decoder layers; freeze the rest. Full "
+                        "fine-tuning of the 8.29B planner needs ~100 GB for weights, "
+                        "gradients and AdamW state alone, which the 122 GB unified pool "
+                        "cannot hold alongside a 10-image prompt's activations. The bridge "
+                        "reads the last layer's hidden states, so the last layers are also "
+                        "where the signal it depends on is formed. 0 trains everything.")
+    p.add_argument("--gradient_checkpointing", action="store_true", default=True)
     p.add_argument("--camera", default="125cm_30deg")
     p.add_argument("--allow_overlap", action="store_true",
                    help="Permit training on scenes that also appear in the probe set")
@@ -212,8 +247,27 @@ def main() -> int:
     # weights.
     model.train()
     model.config.use_cache = False
-    optim = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad],
-                              lr=args.lr, weight_decay=0.0)
+
+    if args.train_last_n_layers > 0:
+        n_frozen = freeze_all_but_last_layers(model, args.train_last_n_layers)
+        print(f"      froze {n_frozen} parameters; training the last "
+              f"{args.train_last_n_layers} decoder layers")
+    if args.gradient_checkpointing and hasattr(model, "gradient_checkpointing_enable"):
+        # With the first layers frozen, the activations entering the first trainable layer
+        # carry no grad_fn, and reentrant checkpointing then drops the graph entirely --
+        # loss.backward() fails with "element 0 of tensors does not require grad". Two
+        # fixes are needed together: non-reentrant checkpointing, and forcing the input
+        # embeddings to require grad so a graph exists from the start.
+        model.gradient_checkpointing_enable(
+            gradient_checkpointing_kwargs={"use_reentrant": False})
+        if hasattr(model, "enable_input_require_grads"):
+            model.enable_input_require_grads()
+
+    trainable = [p for p in model.parameters() if p.requires_grad]
+    n_train = sum(p.numel() for p in trainable)
+    print(f"      trainable: {n_train / 1e6:.0f} M parameters "
+          f"(~{n_train * 12 / 1e9:.1f} GB for weights, grads and AdamW state)")
+    optim = torch.optim.AdamW(trainable, lr=args.lr, weight_decay=0.0)
     step, t0, losses = 0, time.time(), []
     for epoch in range(args.epochs):
         order = np.random.default_rng(args.seed + epoch).permutation(len(train))

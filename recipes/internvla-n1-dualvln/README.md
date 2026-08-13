@@ -217,6 +217,46 @@ That leaves quantization-aware training as the only remaining lever, since the g
 0.988 (weights) and 0.931 (engine) is 4-bit activations and no post-training method reaches
 those. See `quantize/qat.py`.
 
+### QAT was tried and made it worse — but the run did not converge
+
+One exploratory run: 64 samples, 16 optimizer steps, lr 1e-5, the last 4 decoder layers
+trainable (932 M parameters), the rest frozen.
+
+| | z_latents (engine) | pixel L2 mean / median |
+|---|---|---|
+| NVFP4 PTQ | **0.931005** | 40.69 / 23.54 px |
+| NVFP4 + QAT | **0.891583** | 41.86 / 23.16 px |
+
+Worse on the bridge, unchanged on the task within noise. That is consistent with the
+training loss, which *rose* from 0.78 to 1.13 across the 16 steps — the run pushed the
+weights in the wrong direction rather than converging.
+
+**Read this as a failed training run, not as evidence that QAT cannot work here.** The loss
+never fell, so the experiment never reached the question it was meant to answer. What would
+change next: a much smaller learning rate (1e-6 or below — QAT adapts to quantization noise,
+it does not relearn the task, and 1e-5 over 932 M parameters is too large a step), several
+hundred steps rather than sixteen, and a warmup instead of a flat schedule.
+
+Two practical notes for anyone repeating this:
+
+Full fine-tuning does not fit. At 8.29 B parameters, weights plus gradients plus AdamW
+moments come to ~100 GB before any activations, against a 122 GB pool shared with the host —
+the first attempt was killed by the OOM killer. `--train_last_n_layers` (default 4) is what
+makes it fit, and it also targets the right place: the bridge reads the last layer's hidden
+states.
+
+Freezing plus gradient checkpointing needs both fixes at once. The activations entering the
+first trainable layer carry no `grad_fn`, and reentrant checkpointing then discards the
+graph — `loss.backward()` fails with "element 0 of tensors does not require grad". Setting
+`use_reentrant=False` **and** calling `enable_input_require_grads()` is required; either
+alone still fails.
+
+Finally, note that `z_latents` against the unquantized reference is the wrong metric for
+QAT and is only reported here through the engine. PTQ tries to approximate the original
+model, so similarity to it is meaningful. QAT deliberately moves the weights away from the
+original to compensate for quantization noise, so a successful QAT run can *lower* that
+similarity while improving real behaviour. Judge QAT on the engine and on task accuracy.
+
 **Verdict: NVFP4 stays experimental.** 0.931 is below the 0.99 gate, so it is not
 recommended for navigation — but it is far from the broken 0.647 it appeared to be, and the
 remaining gap now has a named suspect rather than a mystery.
