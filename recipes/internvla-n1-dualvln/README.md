@@ -212,15 +212,48 @@ an assertion in the wrapper rather than converting silently.
 and the `FlowMatchEulerDiscreteScheduler` loop itself. These are tiny or control-flow heavy;
 the two engines cover the compute.
 
-**The end-to-end parity check does not run on this machine.**
-`trt-edgellm/verify/verify_system1.py` needs InternNav *and* TensorRT in one interpreter.
-InternNav is written against transformers 4.x — under 5.x it fails first on
-`config.hidden_size` (nested under `text_config` now; `internvla_compat.patch_config_flattening`
-fixes that one) and then on `apply_chunking_to_forward`, removed from `modeling_utils`. That
-chain has no natural end, and the TensorRT bindings ship for Python 3.12 only while the
-transformers 4.51 environment is 3.10. Running it needs a fourth environment with
-transformers 4.51 *and* the TensorRT bindings; shimming removed APIs one at a time is not
-the way there.
+**End-to-end parity: both engines reproduce PyTorch.**
+
+| | cosine vs PyTorch |
+|---|---|
+| `memory_tokens` (DAv2 + MemoryEncoder + QFormer engine) | **0.999981** |
+| `traj_dit`, one diffusion step on the reference's own tensors | **0.999508** |
+| full trajectory, 32 samples x 32 waypoints x 3 (rel-L2 0.0258) | **0.999670** |
+
+The check runs in **two stages across two environments**, because no single interpreter has
+both halves: InternNav is written against transformers 4.x (under 5.x it fails first on
+`config.hidden_size`, then on `apply_chunking_to_forward`, with no natural end), while the
+TensorRT bindings ship for Python 3.12 only.
+
+Splitting it removes the conflict entirely. `verify/dump_system1_reference.py` runs the
+PyTorch reference where InternNav works and writes its inputs *and* outputs to a `.pt`;
+`verify/compare_system1_engines.py` reads that file where TensorRT works. The comparison
+stays exact because the **same tensors** cross the boundary — the engines are fed the
+reference's own inputs rather than regenerated ones.
+
+```bash
+# stage A, transformers 4.51 environment (Python 3.10)
+INTERNNAV_PATH=~/InternNav PYTHONPATH=~/InternNav \
+python verify/dump_system1_reference.py --output_path work/system1_reference.pt
+
+# stage B, TensorRT environment (Python 3.12)
+python verify/compare_system1_engines.py \
+    --reference_path work/system1_reference.pt --engine_dir work/onnx
+```
+
+Two details are worth keeping, because both produce a confident wrong answer:
+
+- **Normalize before the memory block.** `generate_traj` divides by `_resnet_mean/_resnet_std`
+  before `rgb_model`; `MemBlock`, the module that was exported to ONNX, does not, so it
+  expects the already-normalized tensor. Feeding raw pixels made `memory_tokens` disagree
+  with what `generate_traj` used (0.315) while each half stayed internally consistent, which
+  reads exactly like a broken engine.
+- **Capture the reference's starting noise, and probe one step.** `generate_traj` draws its
+  latents mid-function, so reseeding in stage B does not reproduce them, and a different draw
+  gives a different-but-valid trajectory (cosine ~0.31). Stage A therefore dumps the actual
+  noise, plus one real `traj_dit` call with its inputs and output. The single-step number is
+  what separates a bad engine from a bad reimplementation of the sampler loop — here it read
+  0.9995 while the trajectory still read 0.31, which localized the fault to the harness.
 
 ### Earlier full-pipeline figures
 
