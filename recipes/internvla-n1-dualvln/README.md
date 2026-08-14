@@ -87,6 +87,36 @@ export or runtime overhead in general — it is specific to the NVFP4 path. That
 neighbourhood as the known CASK epilogue miscompile, which `-cask_fusion:max_num_epilogues=1`
 already improves from 0.647 to 0.931 but evidently does not fully resolve.
 
+#### Where the engine loses it — measured, not inferred
+
+`trt-edgellm/diagnose_engine_gap.py` compares the engine against the **fake-quant** model
+rather than against the unquantized one, in a single process on the same inputs, so the
+difference is the engine alone. On a text prompt, hidden states before the final norm:
+
+| engine | vs its own fake quant |
+|---|---|
+| FP8 | **0.998256** |
+| NVFP4, `maxBatchSize 1` + CASK cap | **0.986790** |
+| NVFP4, `maxBatchSize 2`, no CASK flag | **0.986790** |
+
+Two things follow.
+
+**The NVFP4 engine carries about eight times FP8's engine-side error** — 0.013 against
+0.002 — and the bridge amplifies it: a 0.013 hidden-state deviation becomes the 0.048 seen
+in z_latents once it passes through the final norm, GELU and `cond_projector`.
+
+**It is not the batch-1 miscompile.** The two NVFP4 engines are genuinely different builds
+(different checksums, `maxBatchSize` 1 and 2, and the fork correctly withholds
+`-cask_fusion:max_num_epilogues=1` from the batch-2 build) and they measure identically to
+six decimal places. So `max_num_epilogues=1` fully recovers whatever the batch-1 path loses,
+and the residual deficit is inherent to the NVFP4 kernels, independent of batch size. The
+earlier guess that a second batch-1 miscompile was hiding here is wrong.
+
+A harness bug found this section's control worth having: comparing against
+`output_hidden_states[-1]` reads 0.49 for a *known-good* FP8 engine, because the engine
+emits hidden states before the final norm while that tensor is after it. The FP8 control
+caught it; without one, 0.48 for NVFP4 would have looked like a broken kernel.
+
 **Practical consequence:** NVFP4 on this model is better than its engine number suggests.
 At 0.9786 the quantization itself is close to the 0.99 gate. Anyone wanting to make NVFP4
 viable here should look at the TensorRT NVFP4 kernel path, not at better quantization
