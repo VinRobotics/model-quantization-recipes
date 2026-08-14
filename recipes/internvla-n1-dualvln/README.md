@@ -9,6 +9,9 @@ vision-language navigation model, targeting NVIDIA Jetson Thor.
 - Model family: `InternVLA-N1-DualVLN` (System 2 = Qwen2.5-VL-7B, System 1 = NextDiT trajectory head)
 - Quantization presets: `fp8_default`, `fp8_per_channel` (validated) · `nvfp4_*` (experimental, see Notes)
 - Runtime target: TensorRT-Edge-LLM engines on Jetson Thor (sm_110)
+- End to end on TensorRT: System 2 FP8 **and** System 1 BF16, both verified against PyTorch
+  (bridge 0.9919, System-1 trajectory 0.9997) — **2.55x** faster per planning step at
+  9.16 GB of weights against 15.7 GB unquantized
 
 ## What this model is, and what the metric has to be
 
@@ -35,23 +38,63 @@ this recipe is gated on `z_latents` cosine against the FP32 reference, not on ge
 
 ## Results
 
-### Benchmark matrix
+### Benchmark matrix — both systems
 
-All three variants built from the same repackaged System 2 and measured on Jetson Thor,
-batch 1, on an idle GPU.
+Everything below was measured on one Jetson Thor, batch 1, on an idle GPU. **System 2 is the
+only part that gets quantized**; System 1 stays BF16 by design, so its row is a conversion
+result rather than a quantization one.
 
-| Variant | checkpoint | LLM engine | visual | prefill (1024) | decode (pastKV 1024) | z_latents (engine) | z_latents (weights only) | pixel L2 mean / median |
-|---|---|---|---|---|---|---|---|---|
-| BF16 (unquantized) | 16.6 GB | 14.15 GB | 1.36 GB | 135.8 ms | 56.4 ms | **0.999471** | — | 47.24 / 27.05 px |
-| **FP8 s1** | 10.1 GB | **7.62 GB** | 1.36 GB | **82.1 ms** | **31.5 ms** | **0.991861** | 0.998020 | 46.26 / **22.51 px** |
-| NVFP4 s1 (experimental) | 7.2 GB | 4.77 GB | 1.36 GB | 73.2 ms | 20.2 ms | 0.931005 ✗ | 0.987986 | 40.69 / 23.54 px |
+#### System 2 — Qwen2.5-VL-7B planner (quantized)
+
+| Variant | weights / activations | KV cache | vision tower | checkpoint | LLM engine | visual engine | prefill (1024) | decode (pastKV 1024) | z_latents (engine) | pixel L2 mean / median |
+|---|---|---|---|---|---|---|---|---|---|---|
+| BF16 baseline | BF16 W16A16 -> FP16 engine | FP16 | BF16 | 16.6 GB | 14.15 GB | 1.36 GB | 135.8 ms | 56.4 ms | **0.999471** | 47.24 / 27.05 px |
+| **FP8 s1** | **FP8 E4M3, W8A8, per-channel** | FP16 | BF16 | 10.1 GB | **7.62 GB** | 1.36 GB | **82.1 ms** | **31.5 ms** | **0.991861** | 46.26 / **22.51 px** |
+| NVFP4 s1 (experimental) | NVFP4 E2M1, W4A4, block 16 w/ FP8 block scales | FP16 | BF16 | 7.2 GB | 4.77 GB | 1.36 GB | 73.2 ms | 20.2 ms | 0.931005 ✗ | 40.69 / 23.54 px |
+
+The KV cache is FP16 in all three: NVFP4 KV needs `sm100f` (datacenter Blackwell) and Thor is
+sm110, and FP8 KV is a separate strategy (`s2`). The vision tower stays BF16 under `s1`;
+quantizing it is `s3`/`s4` and is FP8-only, because the ViT MLP `intermediate_size` is 3420
+and 3420 / 16 = 213.75 does not divide by the NVFP4 block size.
 
 Weight quantization error, mean relative over 21 projections in layers 0/13/27:
 FP8 **2.67 %**, NVFP4 **9.45 %**.
 
+#### System 1 — NextDiT diffusion head + memory block (BF16, not quantized)
+
+Engine weights are BF16; the engine *interface* is fp32/int64, and passing bf16 tensors trips
+an assertion in the wrapper rather than converting silently.
+
+| Component | weights | ONNX | engine | latency | cosine vs PyTorch |
+|---|---|---|---|---|---|
+| memory block (DAv2 + MemoryEncoder + QFormer) | BF16 | 200 MB | **104 MB** | **2.00 ms** | **0.999981** |
+| `traj_dit`, one diffusion step | BF16 | 134 MB | **72 MB** | **5.78 ms** | **0.999508** |
+| full trajectory (10 steps x 32 samples x 32 waypoints) | BF16 | — | — | **61.14 ms** | **0.999670** |
+| **System 1 total** (memory + trajectory) | BF16 | 334 MB | **176 MB** | **63.1 ms · 15.8 Hz** | — |
+| PyTorch `generate_traj` baseline | BF16 | — | — | 175.4 ms · 5.7 Hz | — |
+
+TensorRT gives System 1 a **2.78x** speedup at identical output. Latency is flat in
+`num_sample_trajs` on the PyTorch side (175.4 / 175.6 / 173.1 ms at 32 / 4 / 1), so the head
+is launch-bound rather than compute-bound — which is also why moving it to engines pays.
+
+#### Both systems, one planning step
+
+System 2 latency here is the full multi-image VLN step (~9 images, ~1764 image tokens) from
+12 held-out samples, **not** the synthetic `llm_bench` figures above — different measurement,
+so do not mix the two columns.
+
+| Configuration | System 2 quantization | System 2 | System 1 | total | vs PyTorch |
+|---|---|---|---|---|---|
+| all PyTorch | BF16 | 1631 ms | 175.4 ms | 1806 ms | 1.00x |
+| TensorRT, unquantized | FP16 | 770 ms | 63.1 ms | 833 ms | 2.17x |
+| **TensorRT, recommended** | **FP8 E4M3 W8A8** | **646 ms** | **63.1 ms** | **709 ms** | **2.55x** |
+
+Total on-device weights for the recommended configuration: **7.62 + 1.36 + 0.18 = 9.16 GB**,
+against 15.7 GB for the unquantized TensorRT path.
+
 **FP8 is the recommended scheme.** Against BF16 it is 1.86x smaller and 1.65x/1.79x faster,
 holds the bridge at 0.9919, and the median waypoint error does not get worse — it improves
-slightly (27.05 → 22.51 px), which is within the spread of a 42-sample set and should be read
+slightly (27.05 -> 22.51 px), which is within the spread of a 42-sample set and should be read
 as "unchanged", not as a gain from quantization.
 
 **NVFP4 is faster and smaller still but fails the gate.** Its bridge sits at 0.931, below the
@@ -198,14 +241,15 @@ Upstream InternNav ships **no** TensorRT or ONNX export at all — nothing in `i
 references `trtexec`, `tensorrt` or `torch.onnx`. The System-1 conversion here is entirely
 this recipe's, ported from the source project.
 
-| Component | ONNX | engine | I/O (verified by execution) |
-|---|---|---|---|
-| `traj_dit` (NextDiT diffusion head) | 134 MB | **72 MB** | `x[64,32,384] f32`, `timestep[64] i64`, `z_latents[64,*,768] f32` -> `output[64,32,384]` |
-| memory block (DepthAnythingV2 + MemoryEncoder + QFormer) | 200 MB | **104 MB** | `images[T,3,224,224] f32` -> `memory_tokens[1,32,768]` |
+Sizes, latency and fidelity are in the matrix above. The engine I/O, verified by execution:
 
-Both were run with real inputs: finite output, correct shapes, |max| 2.84 and 3.70. Note
-the engine I/O is fp32/int64 even though the weights are BF16 — passing bf16 tensors fails
-an assertion in the wrapper rather than converting silently.
+| Engine | inputs | output |
+|---|---|---|
+| `traj_dit` | `x[64,32,384]` f32, `timestep[64]` i64, `z_latents[64,*,768]` f32 | `output[64,32,384]` f32 |
+| memory block | `images[T,3,224,224]` f32 | `memory_tokens[1,32,768]` f32 |
+
+The `64` is `2 x num_sample_trajs`: `generate_traj` runs classifier-free guidance, so the
+conditioning is `[null, real]` and the latents are duplicated.
 
 **What stays in PyTorch on the host**, by design rather than omission: `action_encoder` and
 `action_decoder` (two 3x384 linears), `pos_encoding`, `cond_projector` (the System 2 bridge),
@@ -238,7 +282,8 @@ python verify/dump_system1_reference.py --output_path work/system1_reference.pt
 
 # stage B, TensorRT environment (Python 3.12)
 python verify/compare_system1_engines.py \
-    --reference_path work/system1_reference.pt --engine_dir work/onnx
+    --reference_path work/system1_reference.pt --engine_dir work/onnx \
+    --bench_iters 20        # optional: also time each engine and the whole trajectory
 ```
 
 Two details are worth keeping, because both produce a confident wrong answer:
@@ -255,18 +300,12 @@ Two details are worth keeping, because both produce a confident wrong answer:
   what separates a bad engine from a bad reimplementation of the sampler loop — here it read
   0.9995 while the trajectory still read 0.31, which localized the fault to the harness.
 
-### Earlier full-pipeline figures
+### A note on the older numbers
 
-Measured on Jetson Thor, 12 held-out multi-image VLN steps:
-
-| LLM variant | z_latents vs FP32 | agrees w/ PyTorch | System 2 latency | LLM engine |
-|---|---|---|---|---|
-| PyTorch BF16 (baseline) | 0.99974 | — | 1631 ms · 1.00x | ~14 GB weights |
-| base FP16 TensorRT (no quant) | **0.99985** | 12/12 | 770 ms · 2.12x | 14.2 GB |
-| FP8 TensorRT | 0.99559 | 11/12 | **646 ms · 2.53x** | **7.6 GB** |
-| NVFP4 TensorRT | **0.647** ✗ | tokens fine, bridge broken | — | 4.5 GB |
-
-Other engines: ViT 1.3 GB BF16 → 0.68 GB FP8; traj_dit 0.07 GB; memory block 0.11 GB.
+An earlier revision reported z_latents of 0.99974 / 0.99985 / 0.99559 / 0.647 for
+PyTorch / FP16 / FP8 / NVFP4 against an FP32 reference on 12 samples. The matrix above
+supersedes those: it uses a BF16 reference, 42 samples, and the corrected checkpoint loader.
+The ordering is the same and the conclusion is unchanged — FP8 passes, NVFP4 does not.
 
 **Calibration data made no measurable difference.** Held-out z_latents came out at 0.99143
 with generic `cnn_dailymail` text versus 0.99146 with a domain-specific VLN set — equal

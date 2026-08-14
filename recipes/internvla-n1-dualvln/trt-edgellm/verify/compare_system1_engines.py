@@ -24,6 +24,7 @@ Run this under the TensorRT environment (Python 3.12 here)::
 import argparse
 import os
 import sys
+import time
 
 import numpy as np
 import torch
@@ -33,6 +34,18 @@ sys.path.insert(0, os.path.dirname(_HERE))
 sys.path.append(os.environ.get("SYSTEM_SITE", "/usr/lib/python3.12/dist-packages"))
 
 from trt_torch import Engine  # noqa: E402
+
+
+def timeit(fn, iters: int, warmup: int = 3) -> float:
+    """Mean wall-clock milliseconds, synchronized on both sides."""
+    for _ in range(warmup):
+        fn()
+    torch.cuda.synchronize()
+    t0 = time.perf_counter()
+    for _ in range(iters):
+        fn()
+    torch.cuda.synchronize()
+    return (time.perf_counter() - t0) * 1000.0 / iters
 
 
 def cos(a: torch.Tensor, b: torch.Tensor) -> float:
@@ -60,6 +73,9 @@ def parse_args() -> argparse.Namespace:
                    help="Host-side dtype for the diffusion loop. generate_traj runs it in "
                         "bfloat16; fp32 here diverges from the reference even with correct "
                         "engines, because the sampler amplifies the difference.")
+    p.add_argument("--bench_iters", type=int, default=0,
+                   help="If > 0, also time each engine and the whole trajectory. Run on an "
+                        "idle GPU -- a shared device reads 40-60%% high.")
     p.add_argument("--gate", type=float, default=0.99,
                    help="Minimum trajectory cosine to report PASS")
     return p.parse_args()
@@ -82,6 +98,9 @@ def main() -> int:
     # The memory engine was built from MemBlock, which takes [T, C, H, W].
     images = ref["images_chw"].to(dev).float().contiguous()
     tokens = out_of(mem(images=images), "memory_tokens").float().cpu()
+    timing = {}
+    if args.bench_iters:
+        timing["memory_ms"] = timeit(lambda: mem(images=images), args.bench_iters)
     mem.close()
     mem_cos = cos(ref["memory_tokens"], tokens)
     print(f"      memory_tokens cosine vs PyTorch: {mem_cos:.6f}")
@@ -93,6 +112,12 @@ def main() -> int:
     one = out_of(dit_probe(x=st["x"].to(dev).contiguous(),
                            timestep=st["timestep"].to(dev).to(torch.int64).contiguous(),
                            z_latents=st["z_latents"].to(dev).contiguous()), "output")
+    if args.bench_iters:
+        timing["traj_dit_step_ms"] = timeit(
+            lambda: dit_probe(x=st["x"].to(dev).contiguous(),
+                              timestep=st["timestep"].to(dev).to(torch.int64).contiguous(),
+                              z_latents=st["z_latents"].to(dev).contiguous()),
+            args.bench_iters)
     dit_probe.close()
     step_cos = cos(st["output"], one.float().cpu())
     print(f"      traj_dit single-step cosine: {step_cos:.6f}")
@@ -115,7 +140,7 @@ def main() -> int:
     cp = {k: v.to(dev) for k, v in ref["cond_projector"].items()}
     z = ref["z"].to(dev)
     z = torch.nn.functional.linear(z, cp["0.weight"], cp.get("0.bias"))
-    z = torch.nn.functional.gelu(z)
+    z = torch.nn.functional.gelu(z, approximate="tanh")
     z = torch.nn.functional.linear(z, cp["2.weight"], cp.get("2.bias"))
     # generate_traj runs classifier-free guidance: the conditioning is [null, real] and the
     # latents are duplicated, so the engine's batch is 2 * num_sample_trajs. That is why the
@@ -141,18 +166,30 @@ def main() -> int:
     cond, pos_embed = cond.to(dt), pos_embed.to(dt)
     enc_w, enc_b, dec_w, dec_b = (t.to(dt) for t in (enc_w, enc_b, dec_w, dec_b))
     dit.set_runtime_tensor_shape("z_latents", tuple(cond.shape))
-    for t in scheduler.timesteps:
-        feats = torch.nn.functional.linear(latents, enc_w, enc_b) + pos_embed
-        feats = feats.repeat(2, 1, 1)
-        if hasattr(scheduler, "scale_model_input"):
-            feats = scheduler.scale_model_input(feats, t)
-        ts = t.to(dev).expand(feats.shape[0]).to(torch.int64).contiguous()
-        pred = out_of(dit(x=feats.float().contiguous(), timestep=ts,
-                          z_latents=cond.float().contiguous()), "output").to(dt)
-        pred = torch.nn.functional.linear(pred, dec_w, dec_b)
-        uncond, condit = pred.chunk(2)
-        pred = uncond + args.guidance_scale * (condit - uncond)
-        latents = scheduler.step(pred, t, latents).prev_sample
+
+    def run_loop(latents):
+        """One full sampling run. Mirrors generate_traj line for line."""
+        # The scheduler carries step_index across calls, so benchmarking a second run
+        # walks off the end of its sigma table. Reset it per run.
+        scheduler.set_timesteps(steps, sigmas=np.linspace(1.0, 1 / steps, steps))
+        for t in scheduler.timesteps:
+            feats = torch.nn.functional.linear(latents, enc_w, enc_b) + pos_embed
+            feats = feats.repeat(2, 1, 1)
+            if hasattr(scheduler, "scale_model_input"):
+                feats = scheduler.scale_model_input(feats, t)
+            ts = t.to(dev).expand(feats.shape[0]).to(torch.int64).contiguous()
+            pred = out_of(dit(x=feats.float().contiguous(), timestep=ts,
+                              z_latents=cond.float().contiguous()), "output").to(dt)
+            pred = torch.nn.functional.linear(pred, dec_w, dec_b)
+            uncond, condit = pred.chunk(2)
+            pred = uncond + args.guidance_scale * (condit - uncond)
+            latents = scheduler.step(pred, t, latents).prev_sample
+        return latents
+
+    latents = run_loop(latents)
+    if args.bench_iters:
+        start = ref["init_latents"].to(dev).to(dt)
+        timing["trajectory_ms"] = timeit(lambda: run_loop(start), args.bench_iters)
     dit.close()
     traj = latents.float().cpu()
 
@@ -173,6 +210,13 @@ def main() -> int:
     print(f"  trajectory cosine    : {traj_cos:.6f}")
     print(f"  trajectory rel-L2    : {l2:.4f}")
     ok = traj_cos >= args.gate
+    if timing:
+        print("\n  --- latency, mean over "
+              f"{args.bench_iters} iterations (idle GPU assumed) ---")
+        print(f"  memory block engine  : {timing['memory_ms']:.2f} ms")
+        print(f"  traj_dit, one step   : {timing['traj_dit_step_ms']:.2f} ms")
+        print(f"  full trajectory      : {timing['trajectory_ms']:.2f} ms "
+              f"({steps} steps, {n_traj} samples)")
     print(f"  {'PASS' if ok else 'BELOW GATE'} (gate {args.gate})")
     return 0 if ok else 1
 
