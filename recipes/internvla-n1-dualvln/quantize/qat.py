@@ -35,6 +35,7 @@ measure the effect of the leak deliberately.
 """
 import argparse
 import json
+import math
 import os
 import sys
 import time
@@ -53,7 +54,8 @@ OVERLAPPING_SCENES = ("YmJkqBEsHnH",)
 
 
 def discover_training_samples(data_root: str, max_samples: int, camera: str,
-                              allow_overlap: bool, seed: int = 0) -> list[dict]:
+                              allow_overlap: bool, seed: int = 0,
+                              samples_per_episode: int = 1) -> list[dict]:
     """Collect prompt/target pairs from LeRobot episodes, skipping leaked scenes."""
     import glob
     import pyarrow.parquet as pq
@@ -89,27 +91,37 @@ def discover_training_samples(data_root: str, max_samples: int, camera: str,
                       if goals[i] is not None and int(goals[i][0]) >= 0]
             if not usable:
                 continue
-            t = int(usable[rng.integers(0, len(usable))])
+            # One sample per episode caps the set at ~91, too few for a few hundred
+            # optimizer steps without looping over the same prompts a dozen times. Each
+            # episode carries many annotated frames, so drawing several spreads the data
+            # over genuinely different observations rather than repeating one.
+            k = min(samples_per_episode, len(usable))
+            picks = rng.choice(len(usable), size=k, replace=False)
+            for pick in picks:
+                t = int(usable[int(pick)])
 
-            history = np.unique(np.linspace(0, t - 1, pb.NUM_HISTORY, dtype=np.int32)).tolist()
-            frames = [os.path.join(scene_dir, "videos", "chunk-000", level_key,
-                                   f"episode_{idx:06d}_{i}.jpg") for i in history + [t]]
-            lookdown = os.path.join(scene_dir, "videos", "chunk-000", rgb_key,
-                                    f"episode_{idx:06d}_{t}.jpg")
-            if not all(os.path.isfile(p) for p in frames + [lookdown]):
-                continue
+                history = np.unique(
+                    np.linspace(0, t - 1, pb.NUM_HISTORY, dtype=np.int32)).tolist()
+                frames = [os.path.join(scene_dir, "videos", "chunk-000", level_key,
+                                       f"episode_{idx:06d}_{i}.jpg") for i in history + [t]]
+                lookdown = os.path.join(scene_dir, "videos", "chunk-000", rgb_key,
+                                        f"episode_{idx:06d}_{t}.jpg")
+                if not all(os.path.isfile(p) for p in frames + [lookdown]):
+                    continue
 
-            gt = goals[t]
-            samples.append({
-                "episode": scene,
-                "episode_idx": t,
-                "instruction": (ep.get("tasks") or [""])[0],
-                "images": frames + [lookdown],
-                "turn": 2,
-                "assistant_turn1": "↓",
-                # The supervision target is the deployed answer format: "row col".
-                "target": f"{int(gt[0])} {int(gt[1])}",
-            })
+                gt = goals[t]
+                samples.append({
+                    "episode": scene,
+                    "episode_idx": t,
+                    "instruction": (ep.get("tasks") or [""])[0],
+                    "images": frames + [lookdown],
+                    "turn": 2,
+                    "assistant_turn1": "↓",
+                    # The supervision target is the deployed answer format: "row col".
+                    "target": f"{int(gt[0])} {int(gt[1])}",
+                })
+                if len(samples) >= max_samples:
+                    break
             if len(samples) >= max_samples:
                 break
         if len(samples) >= max_samples:
@@ -183,6 +195,14 @@ def parse_args() -> argparse.Namespace:
                    help="Small on purpose: QAT adapts to quantization noise, it does not "
                         "re-learn the task, and a large step undoes the pretrained planner")
     p.add_argument("--grad_accum", type=int, default=4)
+    p.add_argument("--samples_per_episode", type=int, default=1,
+                   help="Timesteps drawn per episode. The calibration set has ~91\n"
+                        "episodes, so 1 caps training far below what a few hundred\n"
+                        "steps needs.")
+    p.add_argument("--warmup_frac", type=float, default=0.1,
+                   help="Fraction of steps spent warming the learning rate up, then\n"
+                        "cosine-decayed. A flat rate from step 0 is what made the\n"
+                        "first run diverge.")
     p.add_argument("--train_last_n_layers", type=int, default=4,
                    help="Train only the last N decoder layers; freeze the rest. Full "
                         "fine-tuning of the 8.29B planner needs ~100 GB for weights, "
@@ -221,7 +241,8 @@ def main() -> int:
 
     print(f"[2/5] Collecting training samples from {args.data_root}")
     train = discover_training_samples(args.data_root, args.num_train_samples,
-                                      args.camera, args.allow_overlap, args.seed)
+                                      args.camera, args.allow_overlap, args.seed,
+                                      args.samples_per_episode)
     if not train:
         print("[ERROR] no usable training samples")
         return 1
@@ -268,6 +289,23 @@ def main() -> int:
     print(f"      trainable: {n_train / 1e6:.0f} M parameters "
           f"(~{n_train * 12 / 1e9:.1f} GB for weights, grads and AdamW state)")
     optim = torch.optim.AdamW(trainable, lr=args.lr, weight_decay=0.0)
+
+    total_steps = max(1, args.epochs * len(train) // args.grad_accum)
+    warmup_steps = max(1, int(total_steps * args.warmup_frac))
+
+    def lr_at(step: int) -> float:
+        """Linear warmup then cosine decay.
+
+        The first attempt ran a flat rate from step 0 and the loss rose monotonically.
+        Warming up matters more than usual here: the fake-quantizers were only just
+        calibrated, so the first gradients are the noisiest ones the run will see.
+        """
+        if step < warmup_steps:
+            return args.lr * (step + 1) / warmup_steps
+        progress = (step - warmup_steps) / max(1, total_steps - warmup_steps)
+        return args.lr * 0.5 * (1.0 + math.cos(math.pi * min(1.0, progress)))
+
+    print(f"      {total_steps} optimizer steps planned, {warmup_steps} of them warmup")
     step, t0, losses = 0, time.time(), []
     for epoch in range(args.epochs):
         order = np.random.default_rng(args.seed + epoch).permutation(len(train))
@@ -278,14 +316,16 @@ def main() -> int:
             loss.backward()
             losses.append(float(out.loss))
             if n % args.grad_accum == 0:
-                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                for group in optim.param_groups:
+                    group["lr"] = lr_at(step)
+                torch.nn.utils.clip_grad_norm_(trainable, 1.0)
                 optim.step()
                 optim.zero_grad(set_to_none=True)
                 step += 1
-                if step % 4 == 0:
-                    recent = float(np.mean(losses[-4 * args.grad_accum:]))
+                if step % 10 == 0:
+                    recent = float(np.mean(losses[-10 * args.grad_accum:]))
                     print(f"      epoch {epoch} step {step:4d}  loss {recent:.4f}  "
-                          f"{time.time() - t0:.0f}s", flush=True)
+                          f"lr {lr_at(step):.2e}  {time.time() - t0:.0f}s", flush=True)
 
     print(f"      trained {step} optimizer steps, final loss "
           f"{float(np.mean(losses[-8:])):.4f}")

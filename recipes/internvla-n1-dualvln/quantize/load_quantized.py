@@ -168,3 +168,51 @@ def load_for_eval(model_path: str, dtype: torch.dtype = torch.bfloat16,
 
     model = model.to(device=device, dtype=dtype).eval()
     return model, processor, algo
+
+
+def load_fake_quant(base_model_path: str, scheme: str, strategy: str,
+                    calib_samples: list, prompt_builder=None,
+                    dtype: torch.dtype = torch.bfloat16, device: str = "cuda"):
+    """Load the *unquantized* checkpoint and insert live quantizers.
+
+    Use this, not :func:`load_for_eval`, whenever a PyTorch number is going to be compared
+    against an engine number.
+
+    The difference matters and is easy to miss. ``load_for_eval`` reconstructs the weights
+    and loads them into a plain model with no quantizers, so it reproduces **weight**
+    quantization error only -- activations stay in bf16 and the matmuls are bf16. But NVFP4
+    is W4**A4** and FP8 is W8**A8**: the engine also quantizes every activation. Comparing
+    the two measures different things, and on this model the difference is not small --
+    weight-only NVFP4 reads 0.988 while the engine reads 0.931.
+
+    Inserting real quantizers via ``mtq.quantize`` simulates both halves, so the PyTorch
+    number becomes directly comparable to the engine's. It costs a calibration pass, which
+    is why the cheaper path still exists for weight-only questions.
+
+    Returns ``(model, tokenizer, processor)``.
+    """
+    import modelopt.torch.quantization as mtq
+
+    from model_loader import load_model
+    from quant_schemes import build_quant_config
+
+    model, tokenizer, processor = load_model(base_model_path, dtype="bf16", device=device)
+    quant_cfg = build_quant_config(scheme, strategy)
+
+    def forward_loop(m):
+        for sample in calib_samples:
+            with torch.no_grad():
+                if prompt_builder is not None:
+                    inputs = prompt_builder(sample, processor)
+                    m(**{k: (v.to(device) if torch.is_tensor(v) else v)
+                         for k, v in inputs.items()})
+                else:
+                    enc = tokenizer(sample, return_tensors="pt", truncation=True,
+                                    max_length=512)
+                    m(enc["input_ids"].to(device))
+
+    model = mtq.quantize(model, quant_cfg, forward_loop=forward_loop)
+    n_quant = sum(1 for n, _ in model.named_modules() if "quantizer" in n.lower())
+    print(f"      [load] fake-quant active: {n_quant} quantizers "
+          f"(weights AND activations simulated, as the engine does)")
+    return model.eval(), tokenizer, processor

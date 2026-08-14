@@ -40,7 +40,7 @@ this recipe is gated on `z_latents` cosine against the FP32 reference, not on ge
 All three variants built from the same repackaged System 2 and measured on Jetson Thor,
 batch 1, on an idle GPU.
 
-| Variant | checkpoint | LLM engine | visual | prefill (1024) | decode (pastKV 1024) | z_latents (engine) | z_latents (weights) | pixel L2 mean / median |
+| Variant | checkpoint | LLM engine | visual | prefill (1024) | decode (pastKV 1024) | z_latents (engine) | z_latents (weights only) | pixel L2 mean / median |
 |---|---|---|---|---|---|---|---|---|
 | BF16 (unquantized) | 16.6 GB | 14.15 GB | 1.36 GB | 135.8 ms | 56.4 ms | **0.999471** | — | 47.24 / 27.05 px |
 | **FP8 s1** | 10.1 GB | **7.62 GB** | 1.36 GB | **82.1 ms** | **31.5 ms** | **0.991861** | 0.998020 | 46.26 / **22.51 px** |
@@ -57,6 +57,37 @@ as "unchanged", not as a gain from quantization.
 **NVFP4 is faster and smaller still but fails the gate.** Its bridge sits at 0.931, below the
 0.99 threshold, so it is not recommended for navigation despite the attractive size and
 latency. See the NVFP4 section for where that number comes from.
+
+### Two z_latents columns, and why they differ
+
+The table has two bridge numbers per variant and they are **not** two measurements of the
+same thing. Reading them as if they were is the single easiest way to misinterpret this
+recipe.
+
+| column | weights | activations | matmul |
+|---|---|---|---|
+| z_latents (weights only) | quantized then reconstructed | **bf16, untouched** | bf16 |
+| z_latents (engine) | quantized | **quantized** | FP4/FP8 tensor cores |
+
+FP8 is W8**A8** and NVFP4 is W4**A4** — the engine quantizes every activation, and the
+weights-only PyTorch path does not simulate that at all. So the second column is always the
+lower one, and the gap between them *is* the activation cost:
+
+| | weights only | engine | activation cost |
+|---|---|---|---|
+| FP16 (no quantization) | — | 0.999471 | — |
+| FP8 | 0.998020 | 0.991861 | **0.006** |
+| NVFP4 | 0.987986 | 0.931005 | **0.057** |
+
+The FP16 engine at 0.999471 is what makes this readable: TensorRT itself costs about
+0.0005, so essentially none of the gap is the export or the runtime. Dropping activations
+from 8 bits to 4 costs nine times more than dropping them to 8, which is the whole story of
+why NVFP4 fails the gate here while FP8 clears it.
+
+If you want a PyTorch number directly comparable to an engine number, use
+`load_quantized.load_fake_quant()`, which inserts live quantizers so activations are
+simulated too. `load_for_eval()` is the cheaper weight-only path and should only be used
+for weight-side questions.
 
 ### Two things to know before reading these numbers
 
