@@ -79,13 +79,23 @@ benchmark:
 	    --work_dir   $(WORK_DIR)
 
 # ── System 1: BF16 engines (requires INTERNNAV_PATH) ──────────────────────────
-.PHONY: export-system1 verify-system1
+.PHONY: export-system1 verify-system1 quantize-system1-fp8
 
 export-system1:
 	bash trt-edgellm/scripts/04_export_system1.sh \
 	    --internvla_ckpt  $(INTERNVLA_CKPT) \
 	    --internnav_path  $(INTERNNAV_PATH) \
 	    --engine_dir      $(ENGINE_DIR)/system1
+
+# Measured and deliberately not shipped: FP8 costs 6x the waypoint deviation for 1.7% of
+# the planning step. Kept so the finding stays reproducible. See README.
+quantize-system1-fp8:
+	python trt-edgellm/dump_system1_calib.py \
+	    --calib_data_root $(CALIB_DATA_ROOT) \
+	    --output_path     $(WORK_DIR)/system1_calib.pt
+	python trt-edgellm/quantize_system1.py \
+	    --calib_path $(WORK_DIR)/system1_calib.pt \
+	    --out_dir    $(ENGINE_DIR)/system1_fp8
 
 verify-system1:
 	bash trt-edgellm/scripts/05_verify.sh \
@@ -128,6 +138,7 @@ help:
 	@echo "  System 1 (requires INTERNNAV_PATH):"
 	@echo "    export-system1          traj_dit + memory block -> BF16 engines"
 	@echo "    verify-system1          trajectory parity vs PyTorch"
+	@echo "    quantize-system1-fp8    System 1 FP8 PTQ (measured, not recommended)"
 	@echo ""
 	@echo "  Other:"
 	@echo "    investigate-nvfp4       why NVFP4 breaks the System2 -> System1 bridge"

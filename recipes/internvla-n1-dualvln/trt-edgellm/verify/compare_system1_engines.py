@@ -65,8 +65,9 @@ def parse_args() -> argparse.Namespace:
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--reference_path", required=True)
     p.add_argument("--engine_dir", required=True,
-                   help="Directory holding system1_traj_dit_bf16.engine and "
-                        "system1_memory_bf16.engine")
+                   help="Directory holding the two System-1 engines")
+    p.add_argument("--engine_suffix", default="bf16",
+                   help="Precision tag in the engine filenames: system1_traj_dit_<tag>.engine")
     p.add_argument("--guidance_scale", type=float, default=1.0)
     p.add_argument("--device", default="cuda")
     p.add_argument("--loop_dtype", default="bfloat16",
@@ -86,8 +87,9 @@ def main() -> int:
     ref = torch.load(args.reference_path, map_location="cpu", weights_only=False)
     dev = args.device
 
-    mem_path = os.path.join(args.engine_dir, "system1_memory_bf16.engine")
-    dit_path = os.path.join(args.engine_dir, "system1_traj_dit_bf16.engine")
+    tag = args.engine_suffix
+    mem_path = os.path.join(args.engine_dir, f"system1_memory_{tag}.engine")
+    dit_path = os.path.join(args.engine_dir, f"system1_traj_dit_{tag}.engine")
     for path in (mem_path, dit_path):
         if not os.path.isfile(path):
             print(f"[ERROR] engine not found: {path}")
@@ -97,6 +99,12 @@ def main() -> int:
     mem = Engine(mem_path)
     # The memory engine was built from MemBlock, which takes [T, C, H, W].
     images = ref["images_chw"].to(dev).float().contiguous()
+    # The FP8 memory engine is built with a dynamic frame count; the BF16 one is static.
+    # Setting the shape is a no-op for the static engine and required for the dynamic one.
+    try:
+        mem.set_runtime_tensor_shape("images", tuple(images.shape))
+    except Exception:
+        pass
     tokens = out_of(mem(images=images), "memory_tokens").float().cpu()
     timing = {}
     if args.bench_iters:
@@ -204,11 +212,19 @@ def main() -> int:
 
     traj_cos = cos(ref_traj, traj)
     l2 = float((traj - ref_traj).norm() / ref_traj.norm())
+    # Cosine says how aligned the trajectories are; it does not say whether a robot would
+    # end up somewhere else. Per-waypoint Euclidean deviation is in the trajectory's own
+    # units (metres) and is the number to judge a scheme on.
+    dev = (traj - ref_traj).norm(dim=-1)
+    reach = ref_traj.norm(dim=-1).mean()
     print("=" * 58)
     print(f"  memory_tokens cosine : {mem_cos:.6f}")
     print(f"  traj_dit single step : {step_cos:.6f}")
     print(f"  trajectory cosine    : {traj_cos:.6f}")
     print(f"  trajectory rel-L2    : {l2:.4f}")
+    print(f"  waypoint deviation   : mean {dev.mean():.4f} / median "
+          f"{dev.median():.4f} / p95 {dev.flatten().quantile(0.95):.4f} "
+          f"(reference waypoint reach {reach:.4f})")
     ok = traj_cos >= args.gate
     if timing:
         print("\n  --- latency, mean over "

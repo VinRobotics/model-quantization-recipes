@@ -60,22 +60,63 @@ and 3420 / 16 = 213.75 does not divide by the NVFP4 block size.
 Weight quantization error, mean relative over 21 projections in layers 0/13/27:
 FP8 **2.67 %**, NVFP4 **9.45 %**.
 
-#### System 1 — NextDiT diffusion head + memory block (BF16, not quantized)
+#### System 1 — NextDiT diffusion head + memory block
 
-Engine weights are BF16; the engine *interface* is fp32/int64, and passing bf16 tensors trips
-an assertion in the wrapper rather than converting silently.
+System 1 ships **BF16**. FP8 was measured rather than assumed, and the measurement is why it
+does not ship: see below. Engine weights are BF16; the engine *interface* is fp32/int64, and
+passing bf16 tensors trips an assertion in the wrapper rather than converting silently.
 
 | Component | weights | ONNX | engine | latency | cosine vs PyTorch |
 |---|---|---|---|---|---|
-| memory block (DAv2 + MemoryEncoder + QFormer) | BF16 | 200 MB | **104 MB** | **2.00 ms** | **0.999981** |
-| `traj_dit`, one diffusion step | BF16 | 134 MB | **72 MB** | **5.78 ms** | **0.999508** |
-| full trajectory (10 steps x 32 samples x 32 waypoints) | BF16 | — | — | **61.14 ms** | **0.999670** |
-| **System 1 total** (memory + trajectory) | BF16 | 334 MB | **176 MB** | **63.1 ms · 15.8 Hz** | — |
+| memory block (DAv2 + MemoryEncoder + QFormer) | BF16 | 200 MB | **104 MB** | **2.04 ms** | **0.999981** |
+| `traj_dit`, one diffusion step | BF16 | 134 MB | **72 MB** | **5.85 ms** | **0.999508** |
+| full trajectory (10 steps x 32 samples x 32 waypoints) | BF16 | — | — | **61.8 ms** | **0.999670** |
+| **System 1 total** (memory + trajectory) | BF16 | 334 MB | **176 MB** | **63.8 ms · 15.7 Hz** | — |
 | PyTorch `generate_traj` baseline | BF16 | — | — | 175.4 ms · 5.7 Hz | — |
 
-TensorRT gives System 1 a **2.78x** speedup at identical output. Latency is flat in
+TensorRT gives System 1 a **2.75x** speedup at identical output. Latency is flat in
 `num_sample_trajs` on the PyTorch side (175.4 / 175.6 / 173.1 ms at 32 / 4 / 1), so the head
 is launch-bound rather than compute-bound — which is also why moving it to engines pays.
+
+#### FP8 on System 1 — measured, and not recommended
+
+Unlike System 2, System 1 goes `torch.onnx.export` -> `trtexec`, and TensorRT does FP8 only
+through **explicit** quantization: the Q/DQ nodes must already be in the ONNX. So this needed
+a ModelOpt PTQ pass (`quantize_system1.py`) calibrated on real tensors captured from a live
+System 2 -> System 1 run (`dump_system1_calib.py`, 40 real `traj_dit` batches over 4 VLN
+samples). Verified in the graph: 328 / 328 FP8 Q/DQ pairs in `traj_dit`, 160 / 160 in the
+memory block.
+
+Waypoint deviation is the number to read. Cosine says how *aligned* two trajectories are;
+deviation says how far apart the robot would actually end up, in the trajectory's own units,
+against a mean per-waypoint reach of **0.2052**.
+
+| Config | traj_dit | memory | engines | trajectory | traj cosine | waypoint dev. mean / median / p95 |
+|---|---|---|---|---|---|---|
+| **BF16 (shipped)** | BF16 72 MB | BF16 104 MB | **176 MB** | 61.8 ms | **0.999670** | **0.0032 / 0.0012 / 0.0117** |
+| mixed | **FP8 39 MB** | BF16 104 MB | 143 MB | 48.4 ms | 0.988032 ✗ | 0.0154 / 0.0050 / 0.0521 |
+| all FP8 | **FP8 39 MB** | **FP8 75 MB** | **114 MB** | 49.6 ms | 0.980213 ✗ | 0.0198 / 0.0053 / 0.0793 |
+
+FP8 works — 1.55x smaller, 20 % faster on the diffusion loop, both configs well clear of
+garbage — and it is still the wrong trade here:
+
+- **The size saving is irrelevant at the system level.** 62 MB off 9.16 GB of deployed
+  weights is 0.7 %.
+- **The latency saving is nearly as small.** 12 ms off a 709 ms planning step is 1.7 %,
+  because System 2 dominates by an order of magnitude.
+- **The fidelity cost is not small.** Mean waypoint deviation goes 0.0032 -> 0.0198, a **6x**
+  increase, and p95 goes 0.0117 -> 0.0793, which is 39 % of a typical waypoint's reach.
+
+Both FP8 configs fall below the 0.99 gate, and the split shows why: quantizing `traj_dit`
+alone already costs 0.9997 -> 0.9880. Its per-step error is only 0.999508 -> 0.997811, but the
+sampler runs 10 steps and each one feeds the next, so a small per-call error compounds. The
+memory block adds the rest (0.999981 -> 0.990204) and buys **nothing** in latency (2.09 ms
+against 2.04 ms) — its Conv2d stays unquantized anyway, since the legacy ONNX exporter cannot
+infer a convolution kernel shape through Q/DQ.
+
+**Keep System 1 in BF16.** Quantization effort belongs on System 2, which is 98 % of both the
+weights and the latency. The scripts stay in the recipe so the measurement is reproducible
+and so the finding can be re-checked on a different System-1 configuration.
 
 #### Both systems, one planning step
 
@@ -86,8 +127,11 @@ so do not mix the two columns.
 | Configuration | System 2 quantization | System 2 | System 1 | total | vs PyTorch |
 |---|---|---|---|---|---|
 | all PyTorch | BF16 | 1631 ms | 175.4 ms | 1806 ms | 1.00x |
-| TensorRT, unquantized | FP16 | 770 ms | 63.1 ms | 833 ms | 2.17x |
-| **TensorRT, recommended** | **FP8 E4M3 W8A8** | **646 ms** | **63.1 ms** | **709 ms** | **2.55x** |
+| TensorRT, unquantized | FP16 | 770 ms | 63.8 ms | 834 ms | 2.17x |
+| **TensorRT, recommended** | **FP8 E4M3 W8A8** (System 1 stays BF16) | **646 ms** | **63.8 ms** | **710 ms** | **2.54x** |
+| TensorRT, System 1 also FP8 | FP8 both systems | 646 ms | 51.6 ms | 698 ms | 2.59x ✗ |
+
+The last row is why System 1 stays BF16: 1.7 % off the step for 6x the waypoint deviation.
 
 Total on-device weights for the recommended configuration: **7.62 + 1.36 + 0.18 = 9.16 GB**,
 against 15.7 GB for the unquantized TensorRT path.
@@ -336,6 +380,8 @@ navigation model), but do not expect it to buy accuracy.
         ├── engine_runner.py              # direct-TensorRT LLM harness (hand-built 3D mRoPE)
         ├── export_traj_dit.py            # System 1 diffusion head -> ONNX -> BF16 engine
         ├── export_memory_block.py        # System 1 memory block -> ONNX -> BF16 engine
+        ├── dump_system1_calib.py         # real System 1 calibration tensors (needs InternNav)
+        ├── quantize_system1.py           # System 1 FP8 PTQ -> ONNX -> engine (measured, not shipped)
         ├── internvla_compat.py           # the three patches needed to load System 1
         ├── traj_dit_loader.py  memblock.py
         ├── trt_torch.py                  # NVIDIA Apache-2.0 — header kept, not restamped
