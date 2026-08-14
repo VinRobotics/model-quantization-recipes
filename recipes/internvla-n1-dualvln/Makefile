@@ -73,10 +73,11 @@ verify-latents:
 	    --repkg_ckpt $(REPKG_CKPT) \
 	    --calib_data_root $(CALIB_DATA_ROOT)
 
+# 06_measure.sh sweeps every engine under ENGINE_DIR, so it takes the parent directory
+# rather than one engine, and is configured by environment rather than flags.
 benchmark:
-	bash trt-edgellm/scripts/06_benchmark.sh \
-	    --engine_dir $(ENGINE_DIR)/$(STRATEGY)_$(SCHEME) \
-	    --work_dir   $(WORK_DIR)
+	WORK_DIR=$(WORK_DIR) ENGINE_DIR=$(ENGINE_DIR) TRT_EDGELLM_DIR=$(TRT_EDGELLM_DIR) \
+	    bash trt-edgellm/scripts/06_measure.sh
 
 # ── System 1: BF16 engines (requires INTERNNAV_PATH) ──────────────────────────
 .PHONY: export-system1 verify-system1 quantize-system1-fp8

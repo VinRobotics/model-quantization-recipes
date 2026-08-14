@@ -5,7 +5,6 @@ vision-language navigation model, targeting NVIDIA Jetson Thor.
 
 ## Status
 
-- Owner: unassigned
 - Model family: `InternVLA-N1-DualVLN` (System 2 = Qwen2.5-VL-7B, System 1 = NextDiT trajectory head)
 - Quantization presets: `fp8_default`, `fp8_per_channel` (validated) · `nvfp4_*` (experimental, see Notes)
 - Runtime target: TensorRT-Edge-LLM engines on Jetson Thor (sm_110)
@@ -478,6 +477,13 @@ diagnosable, not so you set them by hand:
     make export-build       # ONNX export + FP8 LLM engine + visual engine
     make verify-latents     # the acceptance gate: z_latents cosine > 0.99
 
+System 1 needs InternNav and its own two interpreters, since no single environment has both
+InternNav (transformers 4.x) and the TensorRT bindings (Python 3.12):
+
+    make export-system1
+    PYTHON_PT=/path/to/py310/bin/python PYTHON_TRT=/path/to/py312/bin/python \
+        make verify-system1
+
 `make help` lists every target. Each script is also runnable directly; see the per-path
 READMEs in `quantize/` and `trt-edgellm/`.
 
@@ -490,9 +496,8 @@ READMEs in `quantize/` and `trt-edgellm/`.
       --strategy {s1,s2,s3,s4}    s1 LLM · s2 +KV cache · s3 +ViT · s4 +ViT+KV (default: s1)
       --scheme NAME               Preset from configs/schemes.yaml (default: fp8_default)
       --calib {auto,text,multimodal,vln}   Calibration source (default: auto)
-      --calib_data PATH           Root for VLN calibration scenes
+      --calib_data_root PATH      Root for VLN calibration scenes
       --num_calib_samples N       Calibration samples (default: 512; image paths cap at 128)
-      --max_seq_len N             Calibration truncation length (default: 512)
       --dtype {fp16,bf16}         Load dtype (default: bf16)
       --device DEVICE             Torch device (default: cuda)
       --resume DIR                Layerwise checkpoint dir, for AWQ/Hessian crash recovery
