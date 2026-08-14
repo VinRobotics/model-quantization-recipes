@@ -58,36 +58,39 @@ as "unchanged", not as a gain from quantization.
 0.99 threshold, so it is not recommended for navigation despite the attractive size and
 latency. See the NVFP4 section for where that number comes from.
 
-### Two z_latents columns, and why they differ
+### Where NVFP4's loss actually comes from
 
-The table has two bridge numbers per variant and they are **not** two measurements of the
-same thing. Reading them as if they were is the single easiest way to misinterpret this
-recipe.
+Three measurements per scheme, each isolating one layer. The middle one — PyTorch with live
+quantizers, so weights *and* activations are simulated exactly as the engine does them — is
+what makes this decomposable:
 
-| column | weights | activations | matmul |
+| | weights only | fake quant (W4A4) | engine |
 |---|---|---|---|
-| z_latents (weights only) | quantized then reconstructed | **bf16, untouched** | bf16 |
-| z_latents (engine) | quantized | **quantized** | FP4/FP8 tensor cores |
+| what is quantized | weights | weights + activations | weights + activations, real kernels |
+| FP16 | — | — | 0.999471 |
+| FP8 | 0.998020 | — | 0.991861 |
+| **NVFP4** | **0.987986** | **0.978631** | **0.931005** |
 
-FP8 is W8**A8** and NVFP4 is W4**A4** — the engine quantizes every activation, and the
-weights-only PyTorch path does not simulate that at all. So the second column is always the
-lower one, and the gap between them *is* the activation cost:
+For NVFP4 that splits the 0.057 total loss as:
 
-| | weights only | engine | activation cost |
-|---|---|---|---|
-| FP16 (no quantization) | — | 0.999471 | — |
-| FP8 | 0.998020 | 0.991861 | **0.006** |
-| NVFP4 | 0.987986 | 0.931005 | **0.057** |
+- weight quantization: 0.012
+- activation quantization: **0.009**
+- **everything else, inside the engine: 0.048**
 
-The FP16 engine at 0.999471 is what makes this readable: TensorRT itself costs about
-0.0005, so essentially none of the gap is the export or the runtime. Dropping activations
-from 8 bits to 4 costs nine times more than dropping them to 8, which is the whole story of
-why NVFP4 fails the gate here while FP8 clears it.
+**This corrects an earlier claim in this file.** The gap was previously attributed to
+activation quantization. It is not: activations account for 16 % of it, and 84 % appears
+only once the model runs as a TensorRT engine. FP8 shows nothing comparable — its entire
+PyTorch-to-engine gap is 0.006, while NVFP4 loses 0.048 there, nearly eight times more.
 
-If you want a PyTorch number directly comparable to an engine number, use
-`load_quantized.load_fake_quant()`, which inserts live quantizers so activations are
-simulated too. `load_for_eval()` is the cheaper weight-only path and should only be used
-for weight-side questions.
+The FP16 engine at 0.999471 bounds TensorRT's generic cost at about 0.0005, so this is not
+export or runtime overhead in general — it is specific to the NVFP4 path. That is the same
+neighbourhood as the known CASK epilogue miscompile, which `-cask_fusion:max_num_epilogues=1`
+already improves from 0.647 to 0.931 but evidently does not fully resolve.
+
+**Practical consequence:** NVFP4 on this model is better than its engine number suggests.
+At 0.9786 the quantization itself is close to the 0.99 gate. Anyone wanting to make NVFP4
+viable here should look at the TensorRT NVFP4 kernel path, not at better quantization
+algorithms — which is also why AWQ, local-Hessian and QAT all failed to move it.
 
 ### Two things to know before reading these numbers
 
