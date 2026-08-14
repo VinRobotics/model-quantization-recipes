@@ -173,3 +173,44 @@ def apply_all(need_system1: bool = True, allow_missing_depth: bool = False) -> N
         print(f"[compat] patched build_depthanythingv2 -> {DAV2_CKPT}")
         patch_traj_dit_ffn()
         print(f"[compat] patched build_traj_dit -> ffn_dim_multiplier={TRAJ_DIT_FFN_MULTIPLIER:.4f}")
+    # Needed on transformers 5.x regardless of System 1; harmless on 4.x.
+    patch_config_flattening()
+
+
+def patch_config_flattening() -> bool:
+    """Re-expose the top-level LLM config fields that transformers 5.x nests.
+
+    InternNav reads ``config.hidden_size``, ``config.num_hidden_layers`` and friends off
+    the top-level config. transformers 4.x flattened them there; 5.x moves them under
+    ``text_config``, so constructing the model raises a bare
+    ``'InternVLAN1ModelConfig' object has no attribute 'hidden_size'``.
+
+    This matters beyond tidiness: System-1 export needs InternNav (transformers 4.51) while
+    the TensorRT Python bindings ship for 3.12 only, so any script needing *both* -- the
+    System-1 parity check, for one -- cannot run without reconciling them. Copying the
+    fields back from text_config is the smaller of the two evils; the alternative is
+    pinning transformers 4.51 into the TensorRT environment and hoping the edgellm exporter
+    still works there.
+    """
+    try:
+        from internnav.model.basemodel.internvla_n1.internvla_n1 import (
+            InternVLAN1ModelConfig)
+    except ImportError:
+        return False
+
+    _orig = InternVLAN1ModelConfig.from_pretrained.__func__
+
+    def _from_pretrained(cls, *args, **kwargs):
+        config = _orig(cls, *args, **kwargs)
+        inner = getattr(config, "text_config", None)
+        if inner is not None:
+            for field in ("hidden_size", "num_hidden_layers", "num_attention_heads",
+                          "num_key_value_heads", "intermediate_size", "rms_norm_eps",
+                          "vocab_size", "max_position_embeddings", "rope_theta"):
+                if not hasattr(config, field) and hasattr(inner, field):
+                    setattr(config, field, getattr(inner, field))
+        return config
+
+    InternVLAN1ModelConfig.from_pretrained = classmethod(_from_pretrained)
+    print("[compat] re-exposed top-level LLM config fields (transformers 5.x nests them)")
+    return True

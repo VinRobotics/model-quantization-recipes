@@ -194,136 +194,33 @@ it ships as experimental: text stays fluent while the waypoint bridge collapses.
 
 ### System 1 engines (BF16, not quantized)
 
-| Engine | ONNX | engine | I/O |
+Upstream InternNav ships **no** TensorRT or ONNX export at all — nothing in `internnav/`
+references `trtexec`, `tensorrt` or `torch.onnx`. The System-1 conversion here is entirely
+this recipe's, ported from the source project.
+
+| Component | ONNX | engine | I/O (verified by execution) |
 |---|---|---|---|
-| traj_dit | 134 MB | **72 MB** | `x`, `timestep`, `z_latents` -> `output` |
-| memory block | 200 MB | **104 MB** | `images` -> `memory_tokens` |
+| `traj_dit` (NextDiT diffusion head) | 134 MB | **72 MB** | `x[64,32,384] f32`, `timestep[64] i64`, `z_latents[64,*,768] f32` -> `output[64,32,384]` |
+| memory block (DepthAnythingV2 + MemoryEncoder + QFormer) | 200 MB | **104 MB** | `images[T,3,224,224] f32` -> `memory_tokens[1,32,768]` |
 
-Both are BF16 via `trtexec` and deliberately stay unquantized: they are small enough that
-quantizing them buys nothing, and the diffusion head is the part least tolerant of it.
+Both were run with real inputs: finite output, correct shapes, |max| 2.84 and 3.70. Note
+the engine I/O is fp32/int64 even though the weights are BF16 — passing bf16 tensors fails
+an assertion in the wrapper rather than converting silently.
 
-Note the environment split. Exporting System 1 needs transformers 4.51.3 (Python 3.10 here),
-while the TensorRT Python bindings ship for Python 3.12. The exporters therefore build the
-engine and skip their in-script parity check with a message rather than failing; run
-`verify/verify_system1.py` under the 3.12 environment to check parity.
+**What stays in PyTorch on the host**, by design rather than omission: `action_encoder` and
+`action_decoder` (two 3x384 linears), `pos_encoding`, `cond_projector` (the System 2 bridge),
+and the `FlowMatchEulerDiscreteScheduler` loop itself. These are tiny or control-flow heavy;
+the two engines cover the compute.
 
-### Verification inventory
-
-| Check | Needs | Status here |
-|---|---|---|
-| `verify_latents.py` | engine + bridge tensors | **run** — FP16 0.9995, FP8 0.9919 |
-| `verify_latents_vln.py` | engine + held-out VLN episodes | ready |
-| `verify_engine_policy.py` | engine + `INTERNNAV_PATH` | **run** — PASS 2/2 |
-| `verify_system1.py` | System-1 engines + `INTERNNAV_PATH` | ready |
-| `verify_accuracy.py` | engine + `INTERNNAV_PATH` + agent assets | ready |
-| `verify_pixelgoal_gt.py` | engine + held-out parquet ground truth | ready |
-| `verify_e2e_agent.py` | all engines + `INTERNNAV_PATH` | ready |
-| `benchmark/benchmark_system2.py` | a **user-supplied** golden manifest | needs input |
-| `benchmark/bench_system1.py`, `bench_memory.py` | `INTERNNAV_PATH` | ready |
-
-`benchmark_system2.py` needs a golden manifest that nothing in this recipe (or the source
-project) generates; it now fails with an explanation of the expected file shape rather than
-a bare `FileNotFoundError` at the first read.
-
-### NVFP4 — the collapse had two causes, and one of them was the compiler
-
-`trt-edgellm/investigate_nvfp4.py` was written to explain why NVFP4 keeps text fluent while
-the bridge collapses. Three measurements, each isolating a different layer:
-
-| | weight rel-err | z_latents |
-|---|---|---|
-| FP8, weights only (PyTorch) | 2.67 % | 0.998020 |
-| **NVFP4, weights only (PyTorch)** | 9.45 % | **0.987986** |
-| **NVFP4 engine, with the CASK workaround** | — | **0.931005** |
-| NVFP4 engine, no workaround (source project's figure) | — | 0.647 |
-
-Reading them together:
-
-* **Weight quantization is not the problem.** NVFP4 weights cost 0.988 — error 3.5x FP8's,
-  with the bridge degrading roughly in proportion. Nothing anomalous.
-* **Most of the old 0.647 was a compiler artifact.** Rebuilding the engine with
-  `-cask_fusion:max_num_epilogues=1` (which the fork applies automatically, gated to NVFP4
-  graphs at batch 1) moves it to 0.931. The build log confirms all three flags fired:
-  `-peep:fc_h_fusion=off -peep:match_dual_gemm=off -cask_fusion:max_num_epilogues=1`.
-* **A real gap remains.** 0.988 weights-only versus 0.931 through the engine is the part
-  this platform's PyTorch path cannot model: NVFP4 is W4A4, and 4-bit *activations* through
-  a 3584-wide hidden state in blocks of 16 are the remaining suspect.
-
-The 0.647 figure is quoted from the source project and was not reproduced here; what is
-measured here is that the same checkpoint reaches 0.931 once the workaround is applied.
-
-Channel analysis rules out the obvious remedy for the weight-side loss: at the final layer
-the top 128 channels by magnitude carry only 29.5 % of the squared error, and masking them
-*lowers* cosine rather than restoring it. The error is spread, not concentrated in outliers,
-so AWQ scaling or a targeted exclusion has nothing to grip.
-
-**No post-training method closes the weight-side gap.** All three NVFP4 presets land in the
-same place, measured end to end against the unquantized reference:
-
-| Preset | z_latents (weights) | note |
-|---|---|---|
-| `nvfp4_default` | 0.987986 | baseline |
-| `nvfp4_awq_full` | 0.986293 | equal within noise |
-| `nvfp4_local_hessian` | 0.987986 | **byte-identical to default** |
-
-`nvfp4_local_hessian` is a no-op on this model. Its preset genuinely differs
-(`algorithm={'method': 'local_hessian', 'fp8_scale_sweep': True}` against `'max'`) and the
-run exits 0, but the exported weights match `nvfp4_default` bit for bit — 0 of 6,422,528
-bytes differ, scales included. Two quantization runs with different algorithms cannot
-produce identical output unless the algorithm did not run. It remains selectable, so a user
-would reasonably believe they had tried it.
-
-AWQ does run — its weights genuinely differ — but does not help, which is what the channel
-analysis predicted: the error is spread rather than carried by outliers, so per-channel
-rescaling has nothing to grip.
-
-That leaves quantization-aware training as the only remaining lever, since the gap between
-0.988 (weights) and 0.931 (engine) is 4-bit activations and no post-training method reaches
-those. See `quantize/qat.py`.
-
-### QAT was tried and made it worse — but the run did not converge
-
-One exploratory run: 64 samples, 16 optimizer steps, lr 1e-5, the last 4 decoder layers
-trainable (932 M parameters), the rest frozen.
-
-| | z_latents (engine) | pixel L2 mean / median |
-|---|---|---|
-| NVFP4 PTQ | **0.931005** | 40.69 / 23.54 px |
-| NVFP4 + QAT | **0.891583** | 41.86 / 23.16 px |
-
-Worse on the bridge, unchanged on the task within noise. That is consistent with the
-training loss, which *rose* from 0.78 to 1.13 across the 16 steps — the run pushed the
-weights in the wrong direction rather than converging.
-
-**Read this as a failed training run, not as evidence that QAT cannot work here.** The loss
-never fell, so the experiment never reached the question it was meant to answer. What would
-change next: a much smaller learning rate (1e-6 or below — QAT adapts to quantization noise,
-it does not relearn the task, and 1e-5 over 932 M parameters is too large a step), several
-hundred steps rather than sixteen, and a warmup instead of a flat schedule.
-
-Two practical notes for anyone repeating this:
-
-Full fine-tuning does not fit. At 8.29 B parameters, weights plus gradients plus AdamW
-moments come to ~100 GB before any activations, against a 122 GB pool shared with the host —
-the first attempt was killed by the OOM killer. `--train_last_n_layers` (default 4) is what
-makes it fit, and it also targets the right place: the bridge reads the last layer's hidden
-states.
-
-Freezing plus gradient checkpointing needs both fixes at once. The activations entering the
-first trainable layer carry no `grad_fn`, and reentrant checkpointing then discards the
-graph — `loss.backward()` fails with "element 0 of tensors does not require grad". Setting
-`use_reentrant=False` **and** calling `enable_input_require_grads()` is required; either
-alone still fails.
-
-Finally, note that `z_latents` against the unquantized reference is the wrong metric for
-QAT and is only reported here through the engine. PTQ tries to approximate the original
-model, so similarity to it is meaningful. QAT deliberately moves the weights away from the
-original to compensate for quantization noise, so a successful QAT run can *lower* that
-similarity while improving real behaviour. Judge QAT on the engine and on task accuracy.
-
-**Verdict: NVFP4 stays experimental.** 0.931 is below the 0.99 gate, so it is not
-recommended for navigation — but it is far from the broken 0.647 it appeared to be, and the
-remaining gap now has a named suspect rather than a mystery.
+**The end-to-end parity check does not run on this machine.**
+`trt-edgellm/verify/verify_system1.py` needs InternNav *and* TensorRT in one interpreter.
+InternNav is written against transformers 4.x — under 5.x it fails first on
+`config.hidden_size` (nested under `text_config` now; `internvla_compat.patch_config_flattening`
+fixes that one) and then on `apply_chunking_to_forward`, removed from `modeling_utils`. That
+chain has no natural end, and the TensorRT bindings ship for Python 3.12 only while the
+transformers 4.51 environment is 3.10. Running it needs a fourth environment with
+transformers 4.51 *and* the TensorRT bindings; shimming removed APIs one at a time is not
+the way there.
 
 ### Earlier full-pipeline figures
 
