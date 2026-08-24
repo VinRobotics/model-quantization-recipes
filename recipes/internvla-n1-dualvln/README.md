@@ -66,9 +66,9 @@ System 1 (the trajectory expert) is not part of this checkpoint's quantization �
 BF16, built separately with `trtexec` — and the async runtime
 (`internvla_n1_dual_system_inference` / `internvla_n1_dual_system_server`) that drives both
 systems is not part of this repo either; it ships with TensorRT-Edge-LLM. See
-[`experimental_models/internvla_n1/README.md`](https://github.com/NVIDIA/TensorRT-Edge-LLM/blob/main/experimental_models/internvla_n1/README.md)
-in that repo (or the PR branch, until it merges) for the full export → build → run flow and the
-resident-server protocol for driving it from a Python agent.
+[NVIDIA/TensorRT-Edge-LLM#193](https://github.com/NVIDIA/TensorRT-Edge-LLM/pull/193) for the
+full export → build → run flow and the resident-server protocol for driving it from a Python
+agent.
 
 ## Why calibration text needs no special tokens here
 
