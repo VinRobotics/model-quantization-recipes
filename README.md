@@ -28,6 +28,7 @@ The repository currently includes:
 | `recipes/qwen36-27b/` | Universal causal LLM quantization with llmcompressor | `uv sync --extra qwen36-27b` |
 | `recipes/qwen36-moe-35b-nvfp4/` | INT8, FP8, and NVFP4 quantization for hybrid MoE models | `uv sync --extra qwen36-moe-35b-nvfp4` |
 | `recipes/cosmos-reason2/` | NVFP4 quantization for Cosmos Reason2 (2B, 8B) with llmcompressor and Hugging Face export | `uv sync --extra cosmos-reason2` |
+| `recipes/internvla-n1-dualvln/` | FP8 quantization and TensorRT-Edge-LLM deployment for InternVLA-N1-DualVLN, a dual-system vision-language navigation model, on NVIDIA Jetson Thor | `uv sync --extra internvla-n1-dualvln` |
 
 ## Architecture
 
@@ -51,6 +52,7 @@ uv sync --extra qwen3-asr
 uv sync --extra qwen36-27b
 uv sync --extra qwen36-moe-35b-nvfp4
 uv sync --extra cosmos-reason2
+uv sync --extra internvla-n1-dualvln
 ```
 
 ## Quick Start
@@ -124,6 +126,27 @@ MODEL_PATH=/path/to/Cosmos-Reason2-2B OUTPUT_PATH=/path/to/output ./quantize.sh
 MODEL_PATH=/path/to/Cosmos-Reason2-8B OUTPUT_PATH=/path/to/output ./quantize.sh
 ```
 
+### InternVLA-N1 DualVLN
+
+```bash
+cd recipes/internvla-n1-dualvln
+
+export INTERNVLA_CKPT=/path/to/InternVLA-N1-DualVLN
+make repackage          # strip System 1 -> stock Qwen2.5-VL System 2 checkpoint
+make quantize-fp8       # FP8 W8A8, LLM backbone only
+make export-build       # ONNX export + TensorRT-Edge-LLM engines
+make verify-latents     # acceptance gate: System2 -> System1 bridge fidelity
+```
+
+The recipe is split by dependency boundary:
+
+- `quantize/` turns the checkpoint into a quantized stock Qwen2.5-VL — needs no InternNav
+- `trt-edgellm/` builds and verifies the engines; only System 1 export and the agent-level
+  checks require `INTERNNAV_PATH`
+
+Acceptance is measured on `z_latents` cosine (the System 2 → System 1 bridge), not on text
+fluency — a checkpoint can caption correctly and still navigate wrongly.
+
 ## Benchmark and Results
 
 Representative results from `recipes/qwen3-asr/`:
@@ -155,6 +178,7 @@ For the edge results, Jetson measurements use unified memory while RTX measureme
 │   ├── _template/
 │   ├── cosmos-reason2/
 │   ├── gemma4/
+│   ├── internvla-n1-dualvln/
 │   ├── qwen3-asr/
 │   ├── qwen36-27b/
 │   └── qwen36-moe-35b-nvfp4/

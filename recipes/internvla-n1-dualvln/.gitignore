@@ -1,0 +1,8 @@
+# Recipe artifacts. These are multi-gigabyte and reproducible; nothing in the root
+# .gitignore covers them, so a stray WORK_DIR=. would otherwise stage ~40 GB.
+work/
+*.engine
+*.onnx
+*.onnx.data
+bench_imgs/
+reports/
