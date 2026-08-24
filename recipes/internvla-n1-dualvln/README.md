@@ -3,6 +3,28 @@
 FP8 quantization and TensorRT-Edge-LLM deployment for InternVLA-N1-DualVLN, a dual-system
 vision-language navigation model, targeting NVIDIA Jetson Thor.
 
+> **Superseded by native support.** The repackage-and-host-side-bridge approach this recipe
+> uses has been replaced by direct support in TensorRT-Edge-LLM itself:
+> [NVIDIA/TensorRT-Edge-LLM#193](https://github.com/NVIDIA/TensorRT-Edge-LLM/pull/193)
+> (pending review, tracked by
+> [NVIDIA/TensorRT-Edge-LLM#190](https://github.com/NVIDIA/TensorRT-Edge-LLM/issues/190)).
+> That work exports `InternVLA-N1-DualVLN` directly from the released checkpoint — no
+> `repackage_system2.py` step, no `model_type` rewrite — and folds the `z_latents` bridge
+> (`final_norm` + `cond_projector`) into the exported graph, so the engine emits `z_latents`
+> on its own instead of a host-side Python step computing it. It also ships an async C++
+> runtime (`internvla_n1_dual_system_inference` / `internvla_n1_dual_system_server`) running
+> both systems in one process, and 199-episode closed-loop navigation SR on Jetson Thor —
+> validation this recipe never had.
+>
+> It also corrects this recipe's central claim below. **"The bridge is the acceptance
+> metric, not text quality" is not true for this model.** Measured closed-loop, `z_latents`
+> cosine and trajectory cosine each rank a different quantization scheme wrong, in opposite
+> directions — including ranking this recipe's own FP8 recommendation *below* NVFP4, which
+> this recipe's Notes section rules out on cosine grounds. The only metric that agreed with
+> itself across schemes was closed-loop success rate. Kept below for the FP8-on-System-1
+> measurement and the `investigate_nvfp4.py` root-cause analysis, both still accurate; treat
+> everything under "Results" and "Notes" that reasons from `z_latents` cosine as superseded.
+
 ## Status
 
 - Model family: `InternVLA-N1-DualVLN` (System 2 = Qwen2.5-VL-7B, System 1 = NextDiT trajectory head)
