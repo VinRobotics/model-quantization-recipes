@@ -83,27 +83,12 @@ cosmos-reason2 = [
   "tqdm==4.67.3",
 ]
 
-# numpy and scipy are deliberately omitted here. This recipe requires numpy 1.x
-# (OpenCV and diffusers break under numpy 2 on Jetson) while three other extras pin
-# numpy==2.2.6, so rather than assert a resolution outcome we install them as a
-# documented post-sync step; see recipes/internvla-n1-dualvln/requirements-torch.txt.
+# `build_calib_jsonl.py` is stdlib-only (argparse, gzip, json, random). The one real
+# dependency is the `huggingface-cli` entrypoint used to fetch the calibration source data.
+# Quantize/export/build run against TensorRT-Edge-LLM's own environment, not this one --
+# see recipes/internvla-n1-dualvln/README.md.
 internvla-n1-dualvln = [
-  "torch>=2.9.0",
-  "torchvision>=0.24.0",
-  "transformers==4.51.3",
-  "diffusers==0.33.1",
-  "accelerate==1.13.0",
-  "safetensors>=0.8.0",
   "huggingface-hub>=0.36.0",
-  "nvidia-modelopt>=0.44.0",
-  "onnx==1.22.0",
-  "onnxscript==0.7.1",
-  "onnx-graphsurgeon==0.6.1",
-  "pandas>=2.0.0",
-  "pillow>=10.0.0",
-  "numpy-quaternion>=2023.0.0",
-  "pyyaml>=6.0.0",
-  "tqdm>=4.66.0",
 ]
 
 [tool.ruff]
