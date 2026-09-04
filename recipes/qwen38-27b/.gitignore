@@ -1,0 +1,4 @@
+# Quantization artifacts produced locally by this recipe.
+outputs/
+logs/
+ignore_list.json

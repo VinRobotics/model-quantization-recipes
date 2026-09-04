@@ -26,6 +26,7 @@ The repository currently includes:
 | `recipes/gemma4/` | Generic Gemma4 quantization with NVIDIA ModelOpt and Hugging Face export | `uv sync --extra gemma4` |
 | `recipes/qwen3-asr/` | ASR quantization and inference optimization for vLLM, TensorRT-Edge-LLM, and quantization-aware distillation (QAD) | `uv sync --extra qwen3-asr` |
 | `recipes/qwen36-27b/` | Universal causal LLM quantization with llmcompressor | `uv sync --extra qwen36-27b` |
+| `recipes/qwen38-27b/` | FP8 and NVFP4 quantization for Qwen3.8-27B, a hybrid Gated-DeltaNet vision-language model, with llmcompressor | `uv sync --extra qwen38-27b` |
 | `recipes/qwen36-moe-35b-nvfp4/` | INT8, FP8, and NVFP4 quantization for hybrid MoE models | `uv sync --extra qwen36-moe-35b-nvfp4` |
 | `recipes/cosmos-reason2/` | NVFP4 quantization for Cosmos Reason2 (2B, 8B) with llmcompressor and Hugging Face export | `uv sync --extra cosmos-reason2` |
 | `recipes/internvla-n1-dualvln/` | FP8 quantization and TensorRT-Edge-LLM deployment for InternVLA-N1-DualVLN, a dual-system vision-language navigation model, on NVIDIA Jetson Thor | `uv sync --extra internvla-n1-dualvln` |
@@ -50,6 +51,7 @@ Install only the dependencies required for the recipe you plan to run:
 uv sync --extra gemma4
 uv sync --extra qwen3-asr
 uv sync --extra qwen36-27b
+uv sync --extra qwen38-27b
 uv sync --extra qwen36-moe-35b-nvfp4
 uv sync --extra cosmos-reason2
 uv sync --extra internvla-n1-dualvln
@@ -90,6 +92,21 @@ python quantize.py \
   --scheme FP8 \
   --max_memory_per_gpu 76
 ```
+
+### Qwen38 27B
+
+```bash
+uv sync --extra qwen38-27b
+cd recipes/qwen38-27b
+
+export MODEL_PATH=/path/to/Qwen3.8-27B
+bash run_all.sh            # fp8, nvfp4, fp8-dynamic — sequentially
+STRATEGY=fp8 bash run_quantize.sh   # or one strategy at a time
+```
+
+Published checkpoints: [`vrfai/Qwen3.8-27B-FP8`](https://huggingface.co/vrfai/Qwen3.8-27B-FP8),
+[`vrfai/Qwen3.8-27B-FP8-dynamic`](https://huggingface.co/vrfai/Qwen3.8-27B-FP8-dynamic),
+[`vrfai/Qwen3.8-27B-NVFP4`](https://huggingface.co/vrfai/Qwen3.8-27B-NVFP4).
 
 ### Qwen36 MoE 35B NVFP4
 
@@ -181,7 +198,8 @@ For the edge results, Jetson measurements use unified memory while RTX measureme
 │   ├── internvla-n1-dualvln/
 │   ├── qwen3-asr/
 │   ├── qwen36-27b/
-│   └── qwen36-moe-35b-nvfp4/
+│   ├── qwen36-moe-35b-nvfp4/
+│   └── qwen38-27b/
 └── README.md
 ```
 

@@ -1,0 +1,20 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 VinRobotics
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# Qwen3.8-27B quantization pipeline — PyTorch install.
+#
+# Install this before requirements.txt. Pick the line matching your CUDA
+# toolkit; torchvision is required because the checkpoint is a VLM and
+# transformers loads its image processing stack.
+#
+# CUDA 12.8 (validated — H100 SM 90, and Blackwell SM 100+ for NVFP4 kernels):
+#   pip install torch==2.10.0+cu128 torchvision==0.25.0+cu128 \
+#       --extra-index-url https://download.pytorch.org/whl/cu128
+#
+# CUDA 12.6:
+#   pip install torch==2.10.0+cu126 torchvision==0.25.0+cu126 \
+#       --extra-index-url https://download.pytorch.org/whl/cu126
+#
+# The CUDA toolkit on $CUDA_HOME must match the series the torch wheel was
+# built against. A mismatch does not fail at import; it fails much later, when
+# a JIT kernel is loaded, as `undefined symbol: ..., version libcudart.so.12`.
