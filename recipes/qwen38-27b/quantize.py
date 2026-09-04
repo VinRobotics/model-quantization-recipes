@@ -382,6 +382,21 @@ def postprocess_config(config_path: Path) -> None:
     logger.info("Post-processed %s", config_path)
 
 
+# Files the quantized checkpoint owns and must not inherit from the base model:
+# its own config.json, and its own weights.
+_WEIGHT_SUFFIXES = (".safetensors", ".bin", ".pt", ".pth", ".h5", ".msgpack")
+_SKIP_EXACT = {"config.json", ".cache", "crc32.txt"}
+
+
+def _skip_from_base(name: str) -> bool:
+    return (
+        name in _SKIP_EXACT
+        or name.endswith(_WEIGHT_SUFFIXES)
+        or ".safetensors.index" in name
+        or ".bin.index" in name
+    )
+
+
 def save_checkpoint(model, model_path: Path, output_dir: Path) -> None:
     """Write quantized weights, then copy every other base-model file verbatim.
 
@@ -412,10 +427,7 @@ def save_checkpoint(model, model_path: Path, output_dir: Path) -> None:
     def _ignore(src, files):
         skip = []
         for f in files:
-            if f == "config.json" or "safetensors" in f or f in {".cache", "crc32.txt"}:
-                skip.append(f)
-            else:
-                copied.append(f)
+            (skip if _skip_from_base(f) else copied).append(f)
         return skip
 
     shutil.copytree(model_path, output_dir, ignore=_ignore, dirs_exist_ok=True)

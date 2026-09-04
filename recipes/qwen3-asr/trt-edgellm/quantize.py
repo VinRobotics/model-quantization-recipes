@@ -26,6 +26,7 @@ import io
 import argparse
 import json
 import os
+import shutil
 import torch
 import datasets
 import modelopt.torch.quantization as mtq
@@ -132,6 +133,56 @@ def build_quant_cfg(fmt: str) -> dict:
     cfg["quant_cfg"]["*audio_tower*"] = {"enable": False}
     cfg["quant_cfg"]["*lm_head*"]     = {"enable": False}
     return cfg
+
+
+# ---------------------------------------------------------------------------
+# Checkpoint metadata
+# ---------------------------------------------------------------------------
+
+# Files the quantized checkpoint owns and must not inherit from the base model:
+# its own config.json, and its own weights.
+_WEIGHT_SUFFIXES = (".safetensors", ".bin", ".pt", ".pth", ".h5", ".msgpack")
+_SKIP_EXACT = {"config.json", ".cache", "crc32.txt"}
+
+
+def _skip_from_base(name: str) -> bool:
+    return (
+        name in _SKIP_EXACT
+        or name.endswith(_WEIGHT_SUFFIXES)
+        or ".safetensors.index" in name
+        or ".bin.index" in name
+    )
+
+
+def copy_base_metadata(model_path: str, output_dir: str) -> None:
+    """Copy every non-weight file from the base checkpoint verbatim.
+
+    This deliberately replaces `processor.save_pretrained()`. That call
+    re-serializes from the live Python object, so whatever the loaded class does
+    not model is silently dropped, and whatever load-time flag was passed is
+    baked in — this processor is constructed with `fix_mistral_regex=True`, and
+    saving it writes that mutated tokenizer back out as if it were the base.
+
+    The feature extractor config is the part that matters at inference: it
+    carries the mel/window parameters the audio tower was trained against. If it
+    is rewritten or dropped, the checkpoint silently preprocesses audio
+    differently from the model it was derived from.
+
+    Copying the originals is lossless and does not depend on the transformers
+    version in the environment. `config.json` is excluded so that
+    `patch_config_json` still operates on the config the quantized model wrote.
+    """
+    copied = []
+
+    def _ignore(src, names):
+        skip = []
+        for name in names:
+            (skip if _skip_from_base(name) else copied).append(name)
+        return skip
+
+    shutil.copytree(model_path, output_dir, ignore=_ignore, dirs_exist_ok=True)
+    print(f"[COPY] {len(copied)} base-model metadata files from {model_path}: "
+          f"{sorted(set(copied))}")
 
 
 # ---------------------------------------------------------------------------
@@ -242,7 +293,7 @@ def main():
             model.generation_config.top_p = None
 
     model.save_pretrained(args.output_dir)
-    processor.save_pretrained(args.output_dir)
+    copy_base_metadata(args.model_path, args.output_dir)
     print(f"[SAVED] Checkpoint: {args.output_dir}")
 
     # Fix thinker_config.model_type overwritten by ModelOpt

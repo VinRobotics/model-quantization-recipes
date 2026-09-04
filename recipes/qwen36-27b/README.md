@@ -119,6 +119,24 @@ python quantize.py \
 
 ---
 
+## Checkpoint layout
+
+`save_pretrained` writes the quantized weights and `config.json`; every other
+file — tokenizer, preprocessor, chat template, generation config — is copied
+verbatim from the base checkpoint instead of being re-serialized.
+
+That distinction matters. `processor.save_pretrained()` rebuilds each config
+from the live Python object, so anything the loaded class does not model is
+dropped: on a Qwen3-family VLM processor the saved directory ends up with no
+`preprocessor_config.json` and no `video_preprocessor_config.json` at all, and
+a `tokenizer_config.json` missing `added_tokens_decoder` and
+`additional_special_tokens`. Nothing fails at load — the image processor simply
+falls back to library defaults whose pixel budget differs from the base model's,
+and the checkpoint quietly preprocesses inputs differently from the model it was
+derived from. Copying the originals is lossless and version-independent.
+
+---
+
 ## Adding or modifying schemes
 
 All scheme logic is in `configs/schemes.yaml`. To add a custom scheme, append

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import io
+import shutil
 from collections.abc import Callable
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -224,6 +225,61 @@ def write_quantization_summary(model: Any, output_dir: Path) -> Path:
     return quant_log_path
 
 
+# ---------------------------------------------------------------------------
+# Checkpoint metadata
+# ---------------------------------------------------------------------------
+
+# Files the quantized checkpoint owns and must not inherit from the base model:
+# its own config.json, and its own weights.
+_WEIGHT_SUFFIXES = (".safetensors", ".bin", ".pt", ".pth", ".h5", ".msgpack")
+_SKIP_EXACT = {"config.json", ".cache", "crc32.txt"}
+
+
+def _skip_from_base(name: str) -> bool:
+    return (
+        name in _SKIP_EXACT
+        or name.endswith(_WEIGHT_SUFFIXES)
+        or ".safetensors.index" in name
+        or ".bin.index" in name
+    )
+
+
+def copy_base_metadata(model_path: str, output_path: Path) -> None:
+    """Copy every non-weight file from the base checkpoint verbatim.
+
+    This deliberately replaces `processor.save_pretrained()`. That call
+    re-serializes from the live Python object, so whatever the loaded class does
+    not model is silently dropped. Measured on a Qwen3-family VLM processor: the
+    saved directory contains no `preprocessor_config.json` and no
+    `video_preprocessor_config.json` at all, and its `tokenizer_config.json`
+    comes back without `added_tokens_decoder` or `additional_special_tokens`.
+
+    The consequence is not a load error. The image processor falls back to
+    library defaults whose pixel budget differs from the base model's, so the
+    quantized checkpoint preprocesses inputs differently from the model it was
+    derived from — and that only shows up at inference, on inputs larger than
+    the ones the calibration pass happened to exercise.
+
+    Copying the originals is lossless and does not depend on the transformers
+    version in the environment. `export_hf_checkpoint` has already written
+    `config.json`, `hf_quant_config.json` and the weight shards; neither is
+    overwritten here.
+    """
+    copied: list[str] = []
+
+    def _ignore(src: Any, names: list[str]) -> list[str]:
+        skip: list[str] = []
+        for name in names:
+            (skip if _skip_from_base(name) else copied).append(name)
+        return skip
+
+    shutil.copytree(model_path, str(output_path), ignore=_ignore, dirs_exist_ok=True)
+    print(
+        f"Copied {len(copied)} base-model metadata files from {model_path}: "
+        f"{sorted(set(copied))}"
+    )
+
+
 def main() -> None:
     args = parse_args()
 
@@ -283,7 +339,7 @@ def main() -> None:
     print(f"Saving quantized model to {output_path} ...")
     with torch.inference_mode():
         export_hf_checkpoint(model, export_dir=str(output_path))
-    processor.save_pretrained(str(output_path))
+    copy_base_metadata(args.model_path, output_path)
     print("Done.")
 
 

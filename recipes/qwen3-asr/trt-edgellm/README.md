@@ -148,6 +148,17 @@ make trt-quantize-int8  MODEL_PATH=/path/to/Qwen3-ASR-1.7B
 make trt-quantize-int4  MODEL_PATH=/path/to/Qwen3-ASR-1.7B
 ```
 
+**Checkpoint layout.** `save_pretrained` writes the quantized weights and
+`config.json` (then `patch_config_json` restores `thinker_config.model_type`);
+every other file is copied verbatim from the base checkpoint.
+`processor.save_pretrained()` is deliberately not called. It re-serializes from
+the live Python object, which both drops whatever the loaded class does not
+model and bakes in the load-time flags this script passes — the processor here is
+built with `fix_mistral_regex=True`. The feature extractor config is the part
+that matters: it carries the mel and window parameters the audio tower was
+trained against, so rewriting or dropping it makes the checkpoint preprocess
+audio differently from the model it was derived from.
+
 ---
 
 ## Step 2 — Export to ONNX (x86)
