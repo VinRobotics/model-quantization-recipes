@@ -120,6 +120,12 @@ vllm serve vrfai/gemma-4-31B-it-fp8 \
 - Calibration defaults to `abisee/cnn_dailymail` and the `article` text column.
 - Default exclusion rules are derived from the loaded model config and applied on top of the selected quantization preset.
 - `quantize_decisions.txt` is written into the output folder for each run.
+- `export_hf_checkpoint` writes `config.json`, `hf_quant_config.json` and the weights; every
+  other file (tokenizer, preprocessor, chat template, generation config) is copied verbatim
+  from the base checkpoint. `processor.save_pretrained()` is deliberately not called — it
+  rebuilds each config from the live object and silently drops whatever the loaded class does
+  not model, which leaves the quantized checkpoint preprocessing inputs differently from the
+  model it was derived from.
 ## Tested Environments
 - **OS:** Ubuntu 22.04 LTS
 - **Hardware:** 1x NVIDIA H100 80GB HBM3

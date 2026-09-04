@@ -96,10 +96,19 @@ Exclusions are derived at runtime from `model.named_modules()` and adapt to the 
 ```
 <output_path>/
 ├── config.json            # Model config with quantization metadata
+├── hf_quant_config.json   # ModelOpt quantization metadata
 ├── *.safetensors          # Quantized weights
-├── tokenizer files        # Copied from source
+├── tokenizer / processor  # Copied verbatim from the base checkpoint
+├── generation_config.json # Copied verbatim from the base checkpoint
 └── quant_log.txt          # Per-layer quantization summary
 ```
+
+Everything except `config.json`, `hf_quant_config.json` and the weight shards is
+copied from the base checkpoint rather than re-serialized.
+`tokenizer.save_pretrained()` rebuilds the config from the live Python object and
+silently drops whatever the loaded class does not model, which leaves the
+quantized checkpoint preprocessing inputs differently from the model it was
+derived from. Copying the originals is lossless and version-independent.
 
 ## Memory Notes
 
